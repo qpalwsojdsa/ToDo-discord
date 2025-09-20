@@ -3,6 +3,7 @@ const dotenv = require('dotenv');
 
 dotenv.config();
 
+// '/done' 명령어를 배열에서 제거했습니다.
 const commands = [
     {
         name: 'todo',
@@ -22,10 +23,6 @@ const commands = [
             },
         ],
     },
-    {
-        name: 'done',
-        description: '진행 중인 할 일을 완료 처리합니다.',
-    },
 ];
 
 const rest = new REST({ version: '10' }).setToken(process.env.DISCORD_TOKEN);
@@ -38,7 +35,7 @@ const rest = new REST({ version: '10' }).setToken(process.env.DISCORD_TOKEN);
             { body: commands },
         );
         console.log('(/) 슬래시 명령어가 성공적으로 등록되었습니다.');
-    } catch (error) {
+    } catch (error)
         console.error(error);
     }
 })();
