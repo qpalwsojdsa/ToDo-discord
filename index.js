@@ -108,27 +108,32 @@ client.on(Events.InteractionCreate, async interaction => {
                 });
             }
         } 
-        else if (commandName === 'done') {
-            const userId = interaction.user.id;
-            const todo = todos.get(userId);
+    else if (commandName === 'done') {
+    const userId = interaction.user.id;
+    const todo = todos.get(userId);
 
-            if (todo) {
-                clearTimeout(todo.timer);
-                
-                // [수정] AI 프롬프트 개선: 역할극 형식으로 변경
-                const prompt = `당신은 "${todo.character}"라는 캐릭터입니다. 이제부터 당신의 대사만 출력해야 합니다. 다른 부가 설명은 절대 넣지 마세요. 사용자가 "${todo.task}" 할 일을 성공적으로 끝낸 것을 축하하는 대사를 한마디 해주세요.`;
-                const result = await model.generateContent(prompt);
-                const response = await result.response;
-                const congratulationMessage = response.text();
+    if (todo) {
+        // [수정!] 응답을 지연시켜 "생각 중..." 메시지를 먼저 보냅니다.
+        await interaction.deferReply();
 
-                await interaction.reply(`🎉 **"${todo.task}"** 완료!`);
-                await interaction.followUp(congratulationMessage);
+        clearTimeout(todo.timer);
+        
+        // 이제 시간이 오래 걸리는 작업을 마음 편히 수행합니다.
+        const prompt = `당신은 "${todo.character}"라는 캐릭터입니다. 이제부터 당신의 대사만 출력해야 합니다. 다른 부가 설명은 절대 넣지 마세요. 사용자가 "${todo.task}" 할 일을 성공적으로 끝낸 것을 축하하는 대사를 한마디 해주세요.`;
+        const result = await model.generateContent(prompt);
+        const response = await result.response;
+        const congratulationMessage = response.text();
 
-                todos.delete(userId);
-            } else {
-                await interaction.reply({ content: '진행 중인 할 일이 없어요!', ephemeral: true });
-            }
-        }
+        // [수정!] deferReply를 사용했으므로 reply 대신 editReply로 "생각 중..." 메시지를 수정합니다.
+        await interaction.editReply(`🎉 **"${todo.task}"** 완료!`);
+        // 그 다음 축하 메시지를 followUp으로 보냅니다.
+        await interaction.followUp(congratulationMessage);
+
+        todos.delete(userId);
+    } else {
+        await interaction.reply({ content: '진행 중인 할 일이 없어요!', ephemeral: true });
+    }
+}
     }
     // 버튼 클릭 처리
     else if (interaction.isButton()) {
