@@ -32,12 +32,13 @@ const client = new Client({
 });
 
 const genAI = new GoogleGenerativeAI(process.env.GOOGLE_API_KEY);
-const model = genAI.getGenerativeModel({ model: "gemini-1.5-pro-latest" }); 
+// [수정!] 현재 안정적인 최신 모델 이름으로 변경했습니다.
+const model = genAI.getGenerativeModel({ model: "gemini-2.5-pro" }); 
 
 const todos = new Map();
 
 const characters = [
-    { label: '활기찬 후배', value: '활기차고 명랑한 후배' },
+    { label: '요슈아 브라이트', value: '《영웅전설 하늘의 궤적 FC》의 요슈아 브라이트는 주인공 에스텔 브라이트의 파트너이자 의붓남매로, 냉정하고 침착한 성격의 소유자입니다. 그는 활발하고 다소 충동적인 에스텔의 곁에서 항상 한발 앞서 상황을 분석하고 조언을 아끼지 않는 이성적인 면모를 보입니다. 뛰어난 통찰력과 빠른 두뇌 회전으로 사건의 본질을 꿰뚫어 보며, 덜렁거리는 에스텔을 돕고 바로잡는 든든한 조력자 역할을 합니다. 평소에는 부드럽고 온화한 태도를 유지하지만, 전투 시에는 쌍검을 사용하여 빈틈없는 공격을 펼치는 등 강인한 모습도 갖추고 있습니다. 이처럼 요슈아는 에스텔의 부족한 점을 채워주는 최고의 파트너로서 그녀와 함께 성장해 나가는 섬세하고 지적인 인물입니다.' },
     { label: '엄격한 교관', value: '군대 교관처럼 엄격하지만 속은 따뜻한 교관' },
     { label: '다정한 선배', value: '언제나 다정하게 챙겨주는 대학교 선배' },
     { label: '츤데레 친구', value: '겉으로는 틱틱대지만 속으로는 챙겨주는 친구' },
@@ -47,7 +48,7 @@ client.once(Events.ClientReady, () => {
     console.log(`${client.user.tag} 봇이 성공적으로 로그인했습니다!`);
 });
 
-// 상호작용 이벤트 리스너 (이하 코드는 변경할 필요 없습니다)
+// 상호작용 이벤트 리스너
 client.on(Events.InteractionCreate, async interaction => {
     if (interaction.isChatInputCommand()) {
         const commandName = interaction.commandName;
@@ -74,10 +75,14 @@ client.on(Events.InteractionCreate, async interaction => {
             const todo = todos.get(userId);
             if (todo) {
                 clearTimeout(todo.timer);
-                const prompt = `${todo.character} 말투로, 사용자가 '${todo.task}' 할 일을 성공적으로 끝낸 것을 축하하는 짧은 메시지를 한국어로 작성해줘.`;
+                
+                // [프롬프트 수정!] AI가 대사만 말하도록 명확하게 지시합니다.
+                const prompt = `너는 지금부터 '${todo.character}' 캐릭터야. 사용자가 '${todo.task}' 할 일을 성공적으로 끝냈어. 이 상황에 맞는 축하 대사를 딱 한 문장만 한국어로 말해줘. 다른 설명은 절대 추가하지 마.`;
+                
                 const result = await model.generateContent(prompt);
                 const response = await result.response;
                 const congratulationMessage = response.text();
+                
                 await interaction.reply(`🎉 **"${todo.task}"** 완료!`);
                 await interaction.followUp(congratulationMessage);
                 todos.delete(userId);
@@ -112,23 +117,33 @@ client.on(Events.InteractionCreate, async interaction => {
             const selectedCharacterLabel = characters.find(c => c.value === selectedCharacterValue).label;
             const userId = interaction.user.id;
             const channel = interaction.channel;
-            const prompt = `${selectedCharacterValue} 말투로, 사용자가 '${task}' 할 일을 ${parseInt(durationMs) / 3600000}시간 안에 시작하는 것을 응원하는 짧은 메시지를 한국어로 작성해줘.`;
+            
+            // [프롬프트 수정!] AI가 대사만 말하도록 명확하게 지시합니다.
+            const prompt = `너는 지금부터 '${selectedCharacterValue}' 캐릭터야. 사용자가 '${task}' 할 일을 앞으로 ${parseInt(durationMs) / 3600000}시간 안에 끝내야 해. 이 상황에 맞는 응원 대사를 딱 한 문장만 한국어로 말해줘. 다른 설명은 절대 추가하지 마.`;
+            
             const result = await model.generateContent(prompt);
             const response = await result.response;
             const startMessage = response.text();
+            
             await interaction.followUp({ content: `**${selectedCharacterLabel}** 캐릭터가 응원을 시작합니다!` });
             await channel.send(startMessage);
+            
             const timer = setTimeout(async () => {
                 if (todos.has(userId)) {
                     const failedTodo = todos.get(userId);
-                    const failurePrompt = `${failedTodo.character} 말투로, 사용자가 '${failedTodo.task}' 할 일을 시간 안에 끝내지 못한 것에 대해 아쉬워하거나 다음을 격려하는 짧은 메시지를 한국어로 작성해줘.`;
+                    
+                    // [프롬프트 수정!] AI가 대사만 말하도록 명확하게 지시합니다.
+                    const failurePrompt = `너는 지금부터 '${failedTodo.character}' 캐릭터야. 사용자가 '${failedTodo.task}' 할 일을 시간 안에 끝내지 못했어. 이 상황에 맞게 아쉬워하거나 격려하는 대사를 딱 한 문장만 한국어로 말해줘. 다른 설명은 절대 추가하지 마.`;
+                    
                     const failureResult = await model.generateContent(failurePrompt);
                     const failureResponse = await failureResult.response;
                     const failureMessage = failureResponse.text();
+                    
                     await channel.send(`<@${userId}>, ${failureMessage}`);
                     todos.delete(userId);
                 }
             }, parseInt(durationMs));
+            
             todos.set(userId, {
                 task: task,
                 character: selectedCharacterValue,
