@@ -1,4 +1,5 @@
 // 필요한 모듈들을 가져옵니다.
+const express = require('express'); 
 const { Client, GatewayIntentBits, ActionRowBuilder, ButtonBuilder, ButtonStyle, StringSelectMenuBuilder, Events } = require('discord.js');
 const { GoogleGenerativeAI } = require('@google/generative-ai');
 const dotenv = require('dotenv');
@@ -25,7 +26,7 @@ const todos = new Map();
 // [수정] 봇이 응원 메시지를 보낼 캐릭터 목록입니다. value를 100자 이내의 핵심 설명으로 변경했습니다.
 const characters = [
     { label: '요슈아 브라이트', value: '영웅전설의 요슈아. 냉정하고 침착하며 지적인 조력자 말투. 상대를 부드럽게 이끌어주는 스타일.' },
-    { label: '엄격한 교관', value: '군대 교관처럼 엄격하지만 속은 따뜻한 교관 말투' },
+    { label: '게오르그 와이스만', value: '영웅전설 시리즈의 게오르그 와이스만. 비밀 결사 '우로보로스'의 핵심 간부. 교활하고 냉철한 책략가로, 복음계획을 주도하며 작중 모든 사건의 흑막.  겉으로는 온화하고 지적인 학자의 모습. ' },
     { label: '다정한 선배', value: '언제나 다정하게 챙겨주는 대학교 선배 말투' },
     { label: '츤데레 친구', value: '겉으로는 틱틱대지만 속으로는 챙겨주는 친구 말투' },
 ];
@@ -209,3 +210,14 @@ client.on(Events.InteractionCreate, async interaction => {
 
 // .env 파일의 토큰을 사용하여 봇에 로그인합니다.
 client.login(process.env.DISCORD_TOKEN);
+
+const app = express();
+const port = process.env.PORT || 3000;
+
+app.get('/', (req, res) => {
+  res.send('Discord bot is alive!');
+});
+
+app.listen(port, () => {
+  console.log(`Web server is listening on port ${port}.`);
+});
