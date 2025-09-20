@@ -1,23 +1,22 @@
-// [추가!] express 라이브러리를 가져옵니다.
+// --- 1. 웹 서버 설정 (파일 최상단에 위치해야 합니다) ---
 const express = require('express');
 const app = express();
-const port = process.env.PORT || 3000; // Render가 지정하는 포트 또는 기본 3000번 포트
+// Render가 환경 변수로 PORT를 제공하면 그것을 사용하고, 아니면 3000번을 사용합니다.
+const port = process.env.PORT || 3000;
 
-// [추가!] Render의 헬스 체크(health check)를 위한 코드
-// 누군가 우리 봇의 웹 주소로 접속하면 "Bot is alive!"라는 메시지를 보냅니다.
+// 기본 경로('/')로 접속하면 간단한 응답을 보냅니다.
 app.get('/', (req, res) => {
-  res.send('Bot is alive!');
+  res.send('Bot is running!');
 });
 
-// [추가!] 위에서 설정한 포트로 웹 서버를 실행합니다.
-// 이 코드가 있어야 Render가 '포트가 열렸다'고 인식합니다.
+// 설정된 포트에서 웹 서버를 시작합니다.
+// 이 코드가 실행되어야 Render가 서비스가 정상이라고 판단합니다.
 app.listen(port, () => {
-  console.log(`Web server is listening on port ${port}`);
+  console.log(`Web server started and listening on port ${port}`);
 });
 
 
-// ------------------ 기존 봇 코드 (여기는 그대로 둡니다) ------------------
-
+// --- 2. 디스코드 봇 설정 (기존 코드) ---
 const { Client, GatewayIntentBits, ActionRowBuilder, ButtonBuilder, ButtonStyle, StringSelectMenuBuilder, Events } = require('discord.js');
 const { GoogleGenerativeAI } = require('@google/generative-ai');
 const dotenv = require('dotenv');
@@ -48,32 +47,77 @@ client.once(Events.ClientReady, () => {
     console.log(`${client.user.tag} 봇이 성공적으로 로그인했습니다!`);
 });
 
-// 상호작용 이벤트 리스너 (이하 코드는 모두 동일합니다)
+// 상호작용 이벤트 리스너 (이하 코드는 변경할 필요 없습니다)
 client.on(Events.InteractionCreate, async interaction => {
-    // ... (이 부분 코드는 수정할 필요 없습니다) ...
-    // 슬래시 명령어, 버튼, 메뉴 처리 로직은 그대로 유지
-    
-    // (이전 답변에서 수정한 'deferUpdate' 코드가 적용된 상태여야 합니다)
-    if (interaction.isStringSelectMenu()) {
+    if (interaction.isChatInputCommand()) {
+        const commandName = interaction.commandName;
+        if (commandName === 'todo') {
+            const task = interaction.options.getString('할일');
+            if (todos.has(interaction.user.id)) {
+                await interaction.reply({ content: '이미 진행 중인 할 일이 있어요! 먼저 `/done` 명령어로 완료해주세요.', ephemeral: true });
+                return;
+            }
+            const timeRow = new ActionRowBuilder()
+                .addComponents(
+                    new ButtonBuilder().setCustomId(`time_1h_${task}`).setLabel('1시간').setStyle(ButtonStyle.Primary),
+                    new ButtonBuilder().setCustomId(`time_3h_${task}`).setLabel('3시간').setStyle(ButtonStyle.Primary),
+                    new ButtonBuilder().setCustomId(`time_5h_${task}`).setLabel('5시간').setStyle(ButtonStyle.Primary),
+                    new ButtonBuilder().setCustomId(`time_custom_${task}`).setLabel('직접입력(미구현)').setStyle(ButtonStyle.Secondary).setDisabled(true),
+                );
+            await interaction.reply({
+                content: `**"${task}"** 을(를) 몇 시간 안에 하실 건가요?`,
+                components: [timeRow],
+                ephemeral: true
+            });
+        } else if (commandName === 'done') {
+            const userId = interaction.user.id;
+            const todo = todos.get(userId);
+            if (todo) {
+                clearTimeout(todo.timer);
+                const prompt = `${todo.character} 말투로, 사용자가 '${todo.task}' 할 일을 성공적으로 끝낸 것을 축하하는 짧은 메시지를 한국어로 작성해줘.`;
+                const result = await model.generateContent(prompt);
+                const response = await result.response;
+                const congratulationMessage = response.text();
+                await interaction.reply(`🎉 **"${todo.task}"** 완료!`);
+                await interaction.followUp(congratulationMessage);
+                todos.delete(userId);
+            } else {
+                await interaction.reply({ content: '진행 중인 할 일이 없어요!', ephemeral: true });
+            }
+        }
+    } else if (interaction.isButton()) {
+        const [type, duration, ...taskParts] = interaction.customId.split('_');
+        const task = taskParts.join('_');
+        if (type === 'time') {
+            const hours = parseInt(duration.replace('h', ''));
+            const durationMs = hours * 60 * 60 * 1000;
+            const characterMenu = new ActionRowBuilder()
+                .addComponents(
+                    new StringSelectMenuBuilder()
+                        .setCustomId(`character_${durationMs}_${task}`)
+                        .setPlaceholder('응원받을 캐릭터를 선택하세요!')
+                        .addOptions(characters),
+                );
+            await interaction.update({
+                content: '응원해 줄 캐릭터를 선택해주세요!',
+                components: [characterMenu]
+            });
+        }
+    } else if (interaction.isStringSelectMenu()) {
         const [type, durationMs, ...taskParts] = interaction.customId.split('_');
         const task = taskParts.join('_');
-        
         if (type === 'character') {
             await interaction.deferUpdate();
-
             const selectedCharacterValue = interaction.values[0];
             const selectedCharacterLabel = characters.find(c => c.value === selectedCharacterValue).label;
             const userId = interaction.user.id;
             const channel = interaction.channel;
-
             const prompt = `${selectedCharacterValue} 말투로, 사용자가 '${task}' 할 일을 ${parseInt(durationMs) / 3600000}시간 안에 시작하는 것을 응원하는 짧은 메시지를 한국어로 작성해줘.`;
             const result = await model.generateContent(prompt);
             const response = await result.response;
             const startMessage = response.text();
-            
             await interaction.followUp({ content: `**${selectedCharacterLabel}** 캐릭터가 응원을 시작합니다!` });
             await channel.send(startMessage);
-
             const timer = setTimeout(async () => {
                 if (todos.has(userId)) {
                     const failedTodo = todos.get(userId);
@@ -81,12 +125,10 @@ client.on(Events.InteractionCreate, async interaction => {
                     const failureResult = await model.generateContent(failurePrompt);
                     const failureResponse = await failureResult.response;
                     const failureMessage = failureResponse.text();
-                    
                     await channel.send(`<@${userId}>, ${failureMessage}`);
                     todos.delete(userId);
                 }
             }, parseInt(durationMs));
-
             todos.set(userId, {
                 task: task,
                 character: selectedCharacterValue,
@@ -98,5 +140,6 @@ client.on(Events.InteractionCreate, async interaction => {
 });
 
 
-// 봇 로그인 코드는 맨 마지막에 위치해야 합니다.
+// --- 3. 봇 로그인 (파일 최하단에 위치해야 합니다) ---
+// 웹 서버가 먼저 켜진 후에 디스코드 봇에 로그인합니다.
 client.login(process.env.DISCORD_TOKEN);
