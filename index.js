@@ -22,13 +22,34 @@ const model = genAI.getGenerativeModel({ model: "gemini-2.5-pro" });
 // 할 일 목록을 저장할 Map 객체입니다. (사용자 ID를 키로 사용)
 const todos = new Map();
 
-// 봇이 응원 메시지를 보낼 캐릭터 목록입니다. 자유롭게 추가/수정하세요.
+// [수정] 봇이 응원 메시지를 보낼 캐릭터 목록입니다. value를 100자 이내의 핵심 설명으로 변경했습니다.
 const characters = [
-    { label: '요슈아 브라이트', value: '《영웅전설 하늘의 궤적 FC》의 요슈아 브라이트는 주인공 에스텔 브라이트의 파트너이자 의붓남매로, 냉정하고 침착한 성격의 소유자입니다. 그는 활발하고 다소 충동적인 에스텔의 곁에서 항상 한발 앞서 상황을 분석하고 조언을 아끼지 않는 이성적인 면모를 보입니다. 뛰어난 통찰력과 빠른 두뇌 회전으로 사건의 본질을 꿰뚫어 보며, 덜렁거리는 에스텔을 돕고 바로잡는 든든한 조력자 역할을 합니다. 평소에는 부드럽고 온화한 태도를 유지하지만, 전투 시에는 쌍검을 사용하여 빈틈없는 공격을 펼치는 등 강인한 모습도 갖추고 있습니다. 이처럼 요슈아는 에스텔의 부족한 점을 채워주는 최고의 파트너로서 그녀와 함께 성장해 나가는 섬세하고 지적인 인물입니다.' },
-    { label: '엄격한 교관', value: '군대 교관처럼 엄격하지만 속은 따뜻한 교관' },
-    { label: '다정한 선배', value: '언제나 다정하게 챙겨주는 대학교 선배' },
-    { label: '츤데레 친구', value: '겉으로는 틱틱대지만 속으로는 챙겨주는 친구' },
+    { label: '요슈아 브라이트', value: '영웅전설의 요슈아. 냉정하고 침착하며 지적인 조력자 말투. 상대를 부드럽게 이끌어주는 스타일.' },
+    { label: '엄격한 교관', value: '군대 교관처럼 엄격하지만 속은 따뜻한 교관 말투' },
+    { label: '다정한 선배', value: '언제나 다정하게 챙겨주는 대학교 선배 말투' },
+    { label: '츤데레 친구', value: '겉으로는 틱틱대지만 속으로는 챙겨주는 친구 말투' },
 ];
+
+// [새 기능] 시간 문자열 (예: "1h 30m")을 밀리초(ms)로 변환하는 함수
+function parseDuration(durationStr) {
+    const regex = /(\d+)\s*(h|m)/g;
+    let totalMilliseconds = 0;
+    let match;
+
+    if (!durationStr) return 0;
+
+    while ((match = regex.exec(durationStr)) !== null) {
+        const value = parseInt(match[1]);
+        const unit = match[2];
+
+        if (unit === 'h') {
+            totalMilliseconds += value * 60 * 60 * 1000;
+        } else if (unit === 'm') {
+            totalMilliseconds += value * 60 * 1000;
+        }
+    }
+    return totalMilliseconds;
+}
 
 // 봇이 준비되면 한 번 실행되는 이벤트입니다.
 client.once(Events.ClientReady, () => {
@@ -43,45 +64,66 @@ client.on(Events.InteractionCreate, async interaction => {
 
         if (commandName === 'todo') {
             const task = interaction.options.getString('할일');
-            
-            // 이미 진행 중인 할 일이 있는지 확인
+            const timeInput = interaction.options.getString('시간'); // 새로 추가된 시간 옵션
+
             if (todos.has(interaction.user.id)) {
-                await interaction.reply({ content: '이미 진행 중인 할 일이 있어요! 먼저 `/done` 명령어로 완료해주세요.', ephemeral: true });
-                return;
+                return interaction.reply({ content: '이미 진행 중인 할 일이 있어요! 먼저 `/done` 명령어로 완료해주세요.', ephemeral: true });
             }
 
-            // 시간 선택 버튼 생성
-            const timeRow = new ActionRowBuilder()
-                .addComponents(
-                    new ButtonBuilder().setCustomId(`time_1h_${task}`).setLabel('1시간').setStyle(ButtonStyle.Primary),
-                    new ButtonBuilder().setCustomId(`time_3h_${task}`).setLabel('3시간').setStyle(ButtonStyle.Primary),
-                    new ButtonBuilder().setCustomId(`time_5h_${task}`).setLabel('5시간').setStyle(ButtonStyle.Primary),
-                    new ButtonBuilder().setCustomId(`time_custom_${task}`).setLabel('직접입력(미구현)').setStyle(ButtonStyle.Secondary).setDisabled(true), // 직접입력은 심화과정
-                );
+            // [수정] 사용자가 시간을 직접 입력한 경우
+            if (timeInput) {
+                const durationMs = parseDuration(timeInput);
+                if (durationMs <= 0) {
+                    return interaction.reply({ content: '시간 형식이 올바르지 않아요. (예: `1h 30m`, `50m`, `2h`)', ephemeral: true });
+                }
 
-            await interaction.reply({
-                content: `**"${task}"** 을(를) 몇 시간 안에 하실 건가요?`,
-                components: [timeRow],
-                ephemeral: true // 명령어 사용자에게만 보이도록 설정
-            });
-        } else if (commandName === 'done') {
+                // 바로 캐릭터 선택 메뉴를 보여줍니다.
+                const characterMenu = new ActionRowBuilder()
+                    .addComponents(
+                        new StringSelectMenuBuilder()
+                            .setCustomId(`character_${durationMs}_${task}`)
+                            .setPlaceholder('응원받을 캐릭터를 선택하세요!')
+                            .addOptions(characters),
+                    );
+                
+                return interaction.reply({
+                    content: `**"${task}"** 을(를) 시작합니다. 응원해 줄 캐릭터를 선택해주세요!`,
+                    components: [characterMenu],
+                    ephemeral: true
+                });
+            } 
+            // 사용자가 시간을 입력하지 않은 경우 (기존 방식)
+            else {
+                const timeRow = new ActionRowBuilder()
+                    .addComponents(
+                        new ButtonBuilder().setCustomId(`time_1h_${task}`).setLabel('1시간').setStyle(ButtonStyle.Primary),
+                        new ButtonBuilder().setCustomId(`time_3h_${task}`).setLabel('3시간').setStyle(ButtonStyle.Primary),
+                        new ButtonBuilder().setCustomId(`time_5h_${task}`).setLabel('5시간').setStyle(ButtonStyle.Primary),
+                    );
+                
+                return interaction.reply({
+                    content: `**"${task}"** 을(를) 몇 시간 안에 하실 건가요?`,
+                    components: [timeRow],
+                    ephemeral: true
+                });
+            }
+        } 
+        else if (commandName === 'done') {
             const userId = interaction.user.id;
             const todo = todos.get(userId);
 
             if (todo) {
-                // 설정된 타이머를 취소합니다.
                 clearTimeout(todo.timer);
-
-                // AI에게 완료 메시지 생성 요청
-                const prompt = `${todo.character} 말투로, 사용자가 '${todo.task}' 할 일을 성공적으로 끝낸 것을 축하하는 짧은 메시지를 한국어로 작성해줘.`;
+                
+                // [수정] AI 프롬프트 개선: 역할극 형식으로 변경
+                const prompt = `당신은 "${todo.character}"라는 캐릭터입니다. 이제부터 당신의 대사만 출력해야 합니다. 다른 부가 설명은 절대 넣지 마세요. 사용자가 "${todo.task}" 할 일을 성공적으로 끝낸 것을 축하하는 대사를 한마디 해주세요.`;
                 const result = await model.generateContent(prompt);
                 const response = await result.response;
                 const congratulationMessage = response.text();
 
                 await interaction.reply(`🎉 **"${todo.task}"** 완료!`);
-                await interaction.followUp(congratulationMessage); // followUp으로 추가 메시지 전송
+                await interaction.followUp(congratulationMessage);
 
-                // 목록에서 할 일 제거
                 todos.delete(userId);
             } else {
                 await interaction.reply({ content: '진행 중인 할 일이 없어요!', ephemeral: true });
@@ -97,7 +139,6 @@ client.on(Events.InteractionCreate, async interaction => {
             const hours = parseInt(duration.replace('h', ''));
             const durationMs = hours * 60 * 60 * 1000;
 
-            // 캐릭터 선택 메뉴 생성
             const characterMenu = new ActionRowBuilder()
                 .addComponents(
                     new StringSelectMenuBuilder()
@@ -106,52 +147,59 @@ client.on(Events.InteractionCreate, async interaction => {
                         .addOptions(characters),
                 );
 
-            await interaction.update({ // 기존 메시지를 수정
+            await interaction.update({
                 content: '응원해 줄 캐릭터를 선택해주세요!',
                 components: [characterMenu]
             });
         }
     }
     // 선택 메뉴 처리
-else if (interaction.isStringSelectMenu()) {
-    const [type, durationMs, ...taskParts] = interaction.customId.split('_');
-    const task = taskParts.join('_');
-    
-    if (type === 'character') {
-        // [수정!] 상호작용을 받자마자 "처리 중"이라고 먼저 알립니다. (시간 벌기)
-        await interaction.deferUpdate();
+    else if (interaction.isStringSelectMenu()) {
+        await interaction.deferUpdate(); // 시간 초과 오류 방지
 
-        const selectedCharacterValue = interaction.values[0];
-        const selectedCharacterLabel = characters.find(c => c.value === selectedCharacterValue).label;
-        const userId = interaction.user.id;
-        const channel = interaction.channel;
-
-        // 이제 마음 편히 시간이 오래 걸리는 작업을 합니다.
-        const prompt = `${selectedCharacterValue} 말투로, 사용자가 '${task}' 할 일을 ${parseInt(durationMs) / 3600000}시간 안에 시작하는 것을 응원하는 짧은 메시지를 한국어로 작성해줘.`;
-        const result = await model.generateContent(prompt);
-        const response = await result.response;
-        const startMessage = response.text();
+        const [type, durationMs, ...taskParts] = interaction.customId.split('_');
+        const task = taskParts.join('_');
         
-        // [수정!] deferUpdate를 사용했으므로 update 대신 followUp으로 응답합니다.
-        await interaction.followUp({ content: `**${selectedCharacterLabel}** 캐릭터가 응원을 시작합니다!` });
-        await channel.send(startMessage); // followUp 대신 channel.send로 메시지를 보내도 깔끔합니다.
+        if (type === 'character') {
+            const selectedCharacterValue = interaction.values[0];
+            const selectedCharacterLabel = characters.find(c => c.value === selectedCharacterValue).label;
+            const userId = interaction.user.id;
+            const channel = interaction.channel;
+            const hours = parseInt(durationMs) / 3600000;
+            const displayHours = Number.isInteger(hours) ? `${hours}시간` : `${Math.floor(hours)}시간 ${Math.round((hours % 1) * 60)}분`;
 
-        // 타이머 설정 (이 부분은 그대로 둡니다)
-        const timer = setTimeout(async () => {
-            if (todos.has(userId)) {
-                // ... (이하 생략)
-            }
-        }, parseInt(durationMs));
+            // [수정] AI 프롬프트 개선: 역할극 형식으로 변경
+            const prompt = `당신은 "${selectedCharacterValue}"라는 캐릭터입니다. 이제부터 당신의 대사만 출력해야 합니다. 다른 부가 설명은 절대 넣지 마세요. 사용자에게 "${task}"라는 할 일을 ${displayHours} 안에 시작하라고 격려하는 대사를 한마디 해주세요.`;
+            const result = await model.generateContent(prompt);
+            const response = await result.response;
+            const startMessage = response.text();
+            
+            await interaction.followUp({ content: `**${selectedCharacterLabel}** 캐릭터가 응원을 시작합니다!`, ephemeral: true });
+            await channel.send(`<@${userId}> ${startMessage}`);
 
-        // 할 일 목록에 정보 저장 (이 부분은 그대로 둡니다)
-        todos.set(userId, {
-            task: task,
-            character: selectedCharacterValue,
-            timer: timer,
-            channelId: channel.id,
-        });
+            const timer = setTimeout(async () => {
+                if (todos.has(userId)) {
+                    const failedTodo = todos.get(userId);
+                    
+                    // [수정] AI 프롬프트 개선: 역할극 형식으로 변경
+                    const failurePrompt = `당신은 "${failedTodo.character}"라는 캐릭터입니다. 당신의 대사만 출력해야 합니다. 사용자가 "${failedTodo.task}" 할 일을 시간 안에 끝내지 못한 것에 대해 아쉬워하거나 다음을 격려하는 대사를 한마디 해주세요.`;
+                    const failureResult = await model.generateContent(failurePrompt);
+                    const failureResponse = await failureResult.response;
+                    const failureMessage = failureResponse.text();
+                    
+                    await channel.send(`<@${userId}>, ${failureMessage}`);
+                    todos.delete(userId);
+                }
+            }, parseInt(durationMs));
+
+            todos.set(userId, {
+                task: task,
+                character: selectedCharacterValue,
+                timer: timer,
+                channelId: channel.id,
+            });
+        }
     }
-}
 });
 
 // .env 파일의 토큰을 사용하여 봇에 로그인합니다.
