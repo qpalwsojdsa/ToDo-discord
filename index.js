@@ -16,33 +16,27 @@ const client = new Client({
     ],
 });
 
-// Google Gemini AI를 설정합니다.
+// Google Gemini AI를 설정합니다. (user's version)
 const genAI = new GoogleGenerativeAI(process.env.GOOGLE_API_KEY);
 const model = genAI.getGenerativeModel({ model: "gemini-2.5-pro" });
 
-// 여러 사용자의 할 일을 동시에 관리하기 위한 Map 객체입니다. (사용자 ID를 키로 사용)
 const todos = new Map();
 
-// 봇이 응원 메시지를 보낼 캐릭터 목록입니다.
 const characters = [
     { label: '요슈아 브라이트', value: '영웅전설의 요슈아. 냉정하고 침착하며 지적인 조력자 말투. 상대를 부드럽게 이끌어주는 스타일.' },
     { label: '게오르그 와이스만', value: `영웅전설의 게오르그 와이스만. 비밀 결사 우로보로스의 간부. 교활하고 냉철한 책략가. 겉은 온화한 학자 말투.` },
-    { label: '다정한 선배', value: '언제나 다정하게 챙겨주는 대학교 선배 말투' },
-    { label: '츤데레 친구', value: '겉으로는 틱틱대지만 속으로는 챙겨주는 친구 말투' },
+    { label: '린 슈바르처', value: '제국 토르즈 사관학교의 학생이자 교관을 역임한 린 슈바르처. 따뜻한 마음과 강한 책임감을 바탕으로 주변 사람들을 자연스럽게 이끄는 리더. 누구에게나 손을 내밀어 이끄는 다정함과 함께, 맡은 바 임무는 반드시 완수해내는 성실함. ' },
+    { label: '카와무라 쿠미', value: '에일리언9의 에일리언 대책반 소녀. 겉으로는 틱틱대지만 속으로는 챙겨주는 친구 말투' },
 ];
 
-// 시간 문자열 (예: "1h 30m")을 밀리초(ms)로 변환하는 함수
 function parseDuration(durationStr) {
     const regex = /(\d+)\s*(h|m)/g;
     let totalMilliseconds = 0;
     let match;
-
     if (!durationStr) return 0;
-
     while ((match = regex.exec(durationStr)) !== null) {
         const value = parseInt(match[1]);
         const unit = match[2];
-
         if (unit === 'h') {
             totalMilliseconds += value * 60 * 60 * 1000;
         } else if (unit === 'm') {
@@ -52,19 +46,17 @@ function parseDuration(durationStr) {
     return totalMilliseconds;
 }
 
-// 봇이 준비되면 한 번 실행되는 이벤트입니다.
 client.once(Events.ClientReady, () => {
     console.log(`${client.user.tag} 봇이 성공적으로 로그인했습니다!`);
 });
 
-// 상호작용(슬래시 명령어, 버튼 클릭 등)이 발생했을 때 실행되는 이벤트입니다.
 client.on(Events.InteractionCreate, async interaction => {
     try {
-        // 슬래시 명령어 처리
         if (interaction.isChatInputCommand()) {
             const commandName = interaction.commandName;
 
             if (commandName === 'todo') {
+                // ... (todo 명령어 부분은 수정 없음)
                 const task = interaction.options.getString('할일');
                 const timeInput = interaction.options.getString('시간');
 
@@ -105,15 +97,20 @@ client.on(Events.InteractionCreate, async interaction => {
                         ephemeral: true
                     });
                 }
-            } else if (commandName === 'done') {
+            } 
+            // ================== [ /done 명령어 수정 부분 ] ==================
+            else if (commandName === 'done') {
+                // [수정!] 로직을 처리하기 전, 맨 위에서 deferReply를 먼저 호출합니다.
+                await interaction.deferReply();
+
                 const userId = interaction.user.id;
                 const todo = todos.get(userId);
 
                 if (todo) {
-                    await interaction.deferReply();
                     clearTimeout(todo.timer);
                     
                     const prompt = `당신은 "${todo.character}"라는 캐릭터입니다. 이제부터 당신의 대사만 출력해야 합니다. 다른 부가 설명은 절대 넣지 마세요. 사용자가 "${todo.task}" 할 일을 성공적으로 끝낸 것을 축하하는 대사를 한마디 해주세요.`;
+                    
                     const result = await model.generateContent(prompt);
                     const response = await result.response;
                     const congratulationMessage = response.text();
@@ -123,11 +120,12 @@ client.on(Events.InteractionCreate, async interaction => {
 
                     todos.delete(userId);
                 } else {
-                    await interaction.reply({ content: '진행 중인 할 일이 없어요!', ephemeral: true });
+                    // deferReply를 이미 했으므로, 일반 reply 대신 editReply로 응답해야 합니다.
+                    await interaction.editReply({ content: '진행 중인 할 일이 없어요!' });
                 }
             }
         }
-        // 버튼 클릭 처리
+        // ... (버튼 및 선택 메뉴 부분은 수정 없음)
         else if (interaction.isButton()) {
             const [type, duration, ...taskParts] = interaction.customId.split('_');
             const task = taskParts.join('_');
@@ -150,7 +148,6 @@ client.on(Events.InteractionCreate, async interaction => {
                 });
             }
         }
-        // 선택 메뉴 처리
         else if (interaction.isStringSelectMenu()) {
             await interaction.deferUpdate();
 
@@ -169,8 +166,6 @@ client.on(Events.InteractionCreate, async interaction => {
                 const response = await result.response;
                 const startMessage = response.text();
                 
-                // [수정] "응원 시작" 메시지를 없애고, 바로 캐릭터 대사를 보냅니다.
-                // ephemeral: true를 통해 사용자에게만 보였던 기존 메시지 창을 닫기 위해 빈 내용으로 수정합니다.
                 await interaction.editReply({ content: '캐릭터가 응원을 보냈습니다.', components: [] });
                 await channel.send(`<@${userId}> ${startMessage}`);
 
@@ -206,10 +201,8 @@ client.on(Events.InteractionCreate, async interaction => {
     }
 });
 
-// .env 파일의 토큰을 사용하여 봇에 로그인합니다.
 client.login(process.env.DISCORD_TOKEN);
 
-// Render의 헬스 체크를 위한 웹서버 코드
 const app = express();
 const port = process.env.PORT || 3000;
 
