@@ -1,13 +1,11 @@
-// 필요한 모듈들을 가져옵니다.
+
 const express = require('express');
 const { Client, GatewayIntentBits, ActionRowBuilder, ButtonBuilder, ButtonStyle, StringSelectMenuBuilder, Events } = require('discord.js');
 const { GoogleGenerativeAI } = require('@google/generative-ai');
 const dotenv = require('dotenv');
 
-// .env 파일의 환경 변수를 로드합니다.
 dotenv.config();
 
-// 디스코드 클라이언트(봇)를 생성합니다.
 const client = new Client({
     intents: [
         GatewayIntentBits.Guilds,
@@ -16,14 +14,10 @@ const client = new Client({
     ],
 });
 
-// Google Gemini AI를 설정합니다. (성능 좋은 최신 모델로 수정)
+
 const genAI = new GoogleGenerativeAI(process.env.GOOGLE_API_KEY);
 const model = genAI.getGenerativeModel({ model: "gemini-2.5-pro" });
-
-// 여러 사용자의 할 일을 동시에 관리하기 위한 Map 객체입니다. (사용자 ID를 키로 사용)
 const todos = new Map();
-
-// 봇이 응원 메시지를 보낼 캐릭터 목록입니다. (value 길이 100자 이하로 수정)
 const characters = [
     { label: '요슈아 브라이트', value: '영웅전설의 요슈아. 냉정하고 침착하며 지적인 조력자 말투. 상대를 부드럽게 이끌어주는 스타일.' },
     { label: '게오르그 와이스만', value: `영웅전설의 게오르그 와이스만. 비밀 결사 우로보로스의 간부. 교활하고 냉철하지만 겉은 온화한 학자 말투. 당신에게 건조한 반말을 사용한다.` },
@@ -31,7 +25,7 @@ const characters = [
     { label: '우타네 우타', value: 'UTAU 로봇. 당신을 마스터라고 부르며 따른다. 무뚝뚝하지만 실은 마스터를 아끼는 상냥하고 부드러운 소녀.' },
 ];
 
-// 시간 문자열 (예: "1h 30m")을 밀리초(ms)로 변환하는 함수
+
 function parseDuration(durationStr) {
     const regex = /(\d+)\s*(h|m)/g;
     let totalMilliseconds = 0;
@@ -52,15 +46,15 @@ function parseDuration(durationStr) {
     return totalMilliseconds;
 }
 
-// 봇이 준비되면 한 번 실행되는 이벤트입니다.
+
 client.once(Events.ClientReady, () => {
     console.log(`${client.user.tag} 봇이 성공적으로 로그인했습니다!`);
 });
 
-// 상호작용(슬래시 명령어, 버튼 클릭 등)이 발생했을 때 실행되는 이벤트입니다.
+
 client.on(Events.InteractionCreate, async interaction => {
     try {
-        // 슬래시 명령어 처리
+
         if (interaction.isChatInputCommand()) {
             if (interaction.commandName === 'todo') {
                 const task = interaction.options.getString('할일');
@@ -105,7 +99,7 @@ client.on(Events.InteractionCreate, async interaction => {
                 }
             }
         }
-        // 버튼 클릭 처리
+
         else if (interaction.isButton()) {
             const [type, ...parts] = interaction.customId.split('_');
 
@@ -128,9 +122,9 @@ client.on(Events.InteractionCreate, async interaction => {
                     components: [characterMenu]
                 });
             } 
-            // [새 기능] 시간 만료 후 '네/아니오' 버튼 처리
+       
             else if (type === 'finish') {
-                await interaction.deferUpdate(); // AI 응답 시간 벌기
+                await interaction.deferUpdate(); 
 
                 const [answer, userId, ...taskParts] = parts;
                 const task = taskParts.join('_');
@@ -151,12 +145,12 @@ client.on(Events.InteractionCreate, async interaction => {
                 const response = await result.response;
                 const finalMessage = response.text();
 
-                // 기존 버튼 메시지를 AI의 최종 답변으로 수정
+              
                 await interaction.editReply({ content: finalMessage, components: [] });
-                todos.delete(userId); // 모든 과정이 끝났으므로 할 일 목록에서 제거
+                todos.delete(userId);
             }
         }
-        // 선택 메뉴 처리
+      
         else if (interaction.isStringSelectMenu()) {
             await interaction.deferUpdate();
 
@@ -178,10 +172,10 @@ client.on(Events.InteractionCreate, async interaction => {
                 await interaction.editReply({ content: '캐릭터가 응원을 보냈습니다.', components: [] });
                 await channel.send(`<@${userId}> ${startMessage}`);
 
-                // [수정] 타이머 만료 시 '네/아니오' 버튼 질문
+             
                 const timer = setTimeout(async () => {
                     const currentTodo = todos.get(userId);
-                    // 타이머가 만료되었을 때, 사용자가 아직 해당 할 일을 진행 중인지 확인
+                  
                     if (currentTodo && currentTodo.task === task) {
                         const confirmationButtons = new ActionRowBuilder()
                             .addComponents(
@@ -220,10 +214,10 @@ client.on(Events.InteractionCreate, async interaction => {
     }
 });
 
-// .env 파일의 토큰을 사용하여 봇에 로그인합니다.
+
 client.login(process.env.DISCORD_TOKEN);
 
-// Render의 헬스 체크를 위한 웹서버 코드
+
 const app = express();
 const port = process.env.PORT || 3000;
 
