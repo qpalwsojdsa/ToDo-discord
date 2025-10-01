@@ -1,5 +1,6 @@
 const express = require('express');
-const { Client, GatewayIntentBits, ActionRowBuilder, ButtonBuilder, ButtonStyle, StringSelectMenuBuilder, Events, WebhookClient } = require('discord.js');
+// [수정] 모달(팝업창) 관련 컴포넌트 추가
+const { Client, GatewayIntentBits, ActionRowBuilder, ButtonBuilder, ButtonStyle, StringSelectMenuBuilder, Events, WebhookClient, ModalBuilder, TextInputBuilder, TextInputStyle } = require('discord.js');
 const { GoogleGenerativeAI } = require('@google/generative-ai');
 const dotenv = require('dotenv');
 
@@ -134,7 +135,7 @@ client.on(Events.InteractionCreate, async interaction => {
             const [type, ...parts] = interaction.customId.split('_');
 
             if (type === 'time') {
-                await interaction.deferUpdate({ ephemeral: true });
+                await interaction.deferUpdate(); // ephemeral 메시지를 업데이트할 때는 deferUpdate()만 사용
                 const [duration, ...taskParts] = parts;
                 const task = taskParts.join('_');
                 const hours = parseInt(duration.replace('h', ''));
@@ -151,33 +152,53 @@ client.on(Events.InteractionCreate, async interaction => {
                 await interaction.editReply({ content: '응원해 줄 캐릭터를 선택해주세요!', components: [characterMenu] });
             } 
             else if (type === 'finish') {
-                await interaction.deferUpdate();
-
                 const [answer, userId, ...taskParts] = parts;
                 const task = taskParts.join('_');
-                const todo = todos.get(userId);
 
-                if (!todo || todo.task !== task) {
-                    return interaction.editReply({ content: '이미 처리되었거나 만료된 할 일입니다.', embeds: [], components: [] });
-                }
-                
-                let prompt = `당신은 ${todo.character.description}라는 캐릭터입니다. 이제부터 당신의 대사만 출력해야 합니다. 다른 부가 설명은 절대 넣지 마세요. `;
-                if (answer === 'yes') {
-                    prompt += `사용자가 "${todo.task}" 할 일을 성공적으로 끝낸 것을 칭찬하거나 축하하는 대사를 한마디 해주세요.`;
+                if (answer === 'direct') {
+                    // [새 기능] 직접 입력 모달 생성
+                    const modal = new ModalBuilder()
+                        .setCustomId(`modal_submit_${userId}_${task}`)
+                        .setTitle('할 일 결과 입력');
+
+                    const reasonInput = new TextInputBuilder()
+                        .setCustomId('reasonInput')
+                        .setLabel("못한 이유나 다른 상황을 알려주세요.")
+                        .setStyle(TextInputStyle.Paragraph) // 여러 줄 입력 가능
+                        .setPlaceholder('예: 갑자기 다른 급한 일이 생겼어요...')
+                        .setRequired(true);
+
+                    const actionRow = new ActionRowBuilder().addComponents(reasonInput);
+                    modal.addComponents(actionRow);
+
+                    await interaction.showModal(modal);
+
                 } else {
-                    prompt += `사용자가 "${todo.task}" 할 일을 끝내지 못했다고 답했습니다. 그를 위로하거나 다음을 격려하는 대사를 한마디 해주세요.`;
+                    await interaction.deferUpdate();
+                    const todo = todos.get(userId);
+
+                    if (!todo || todo.task !== task) {
+                        return interaction.editReply({ content: '이미 처리되었거나 만료된 할 일입니다.', embeds: [], components: [] });
+                    }
+                    
+                    let prompt = `당신은 ${todo.character.description}라는 캐릭터입니다. 이제부터 당신의 대사만 출력해야 합니다. 다른 부가 설명은 절대 넣지 마세요. `;
+                    if (answer === 'yes') {
+                        prompt += `사용자가 "${todo.task}" 할 일을 성공적으로 끝낸 것을 칭찬하거나 축하하는 대사를 한마디 해주세요.`;
+                    } else {
+                        prompt += `사용자가 "${todo.task}" 할 일을 끝내지 못했다고 답했습니다. 그를 위로하거나 다음을 격려하는 대사를 한마디 해주세요.`;
+                    }
+                    
+                    const result = await model.generateContent(prompt);
+                    const response = await result.response;
+                    const dialogue = response.text().trim().replace(/^"|"$/g, '');
+                    
+                    await interaction.editReply({ 
+                        content: '', 
+                        embeds: [{ description: `"${dialogue}"` }], 
+                        components: [] 
+                    });
+                    todos.delete(userId);
                 }
-                
-                const result = await model.generateContent(prompt);
-                const response = await result.response;
-                const dialogue = response.text().trim().replace(/^"|"$/g, '');
-                
-                await interaction.editReply({ 
-                    content: '', 
-                    embeds: [{ description: `"${dialogue}"` }], 
-                    components: [] 
-                });
-                todos.delete(userId);
             }
         }
         else if (interaction.isStringSelectMenu()) {
@@ -225,6 +246,8 @@ client.on(Events.InteractionCreate, async interaction => {
                             .addComponents(
                                 new ButtonBuilder().setCustomId(`finish_yes_${userId}_${task}`).setLabel('네, 끝냈어요').setStyle(ButtonStyle.Success),
                                 new ButtonBuilder().setCustomId(`finish_no_${userId}_${task}`).setLabel('아니오, 못했어요').setStyle(ButtonStyle.Danger),
+                                // [새 기능] 직접 입력 버튼 추가
+                                new ButtonBuilder().setCustomId(`finish_direct_${userId}_${task}`).setLabel('직접 입력').setStyle(ButtonStyle.Secondary)
                             );
                         
                         const webhookForTimer = await getOrCreateWebhook(channel);
@@ -248,10 +271,38 @@ client.on(Events.InteractionCreate, async interaction => {
                 });
             }
         }
+        // [새 기능] 모달 제출 처리
+        else if (interaction.isModalSubmit()) {
+            await interaction.deferUpdate(); // 사용자의 입력을 받았다는 것을 디스코드에 알림
+
+            const [type, action, userId, ...taskParts] = interaction.customId.split('_');
+            const task = taskParts.join('_');
+
+            if (type === 'modal' && action === 'submit') {
+                const userInput = interaction.fields.getTextInputValue('reasonInput');
+                const todo = todos.get(userId);
+
+                if (!todo || todo.task !== task) {
+                    return interaction.editReply({ content: '이미 처리되었거나 만료된 할 일입니다.', embeds: [], components: [] });
+                }
+
+                const prompt = `당신은 ${todo.character.description}라는 캐릭터입니다. 이제부터 당신의 대사만 출력해야 합니다. 다른 부가 설명은 절대 넣지 마세요. 사용자가 "${todo.task}" 할 일의 결과에 대해 "${userInput}" 라고 직접 입력했습니다. 사용자의 답변에 대해 캐릭터에 맞게 한마디 응답해주세요.`;
+
+                const result = await model.generateContent(prompt);
+                const response = await result.response;
+                const dialogue = response.text().trim().replace(/^"|"$/g, '');
+                
+                // 원래 버튼이 있던 메시지를 수정하여 최종 답변을 표시
+                await interaction.editReply({
+                    content: '',
+                    embeds: [{ description: `"${dialogue}"` }],
+                    components: []
+                });
+                todos.delete(userId);
+            }
+        }
     } catch (error) {
         console.error('상호작용 처리 중 오류 발생:', error);
-        // [수정] 오류가 발생했을 때 사용자에게 응답을 보내려다 또 다른 오류가 발생하는 것을 방지합니다.
-        // 이제 봇이 멈추지 않고, 오류 로그만 남깁니다.
         try {
             if (!interaction.replied && !interaction.deferred) {
                 await interaction.reply({ content: '오류가 발생했습니다. 잠시 후 다시 시도해주세요.', ephemeral: true });
