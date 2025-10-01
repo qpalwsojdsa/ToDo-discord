@@ -60,15 +60,12 @@ function updatePresence() {
     client.user.setActivity(statusText, { type: ActivityType.Watching });
 }
 
-// [새 기능] 중간 알림을 스케줄링하는 함수
 async function scheduleReminders(userId, task, durationMs, character, channel) {
     const hours = durationMs / 3600000;
-    // 2.5시간당 1번의 알림을 기준으로 횟수 계산 (최소 30분 이상일 때만)
     const numberOfReminders = hours > 0.5 ? Math.floor(hours / 2.5) + 1 : 0;
     if (numberOfReminders === 0) return [];
 
     const reminderTimers = [];
-    // 알림이 너무 빠르거나 늦게 가는 것을 방지 (앞/뒤 15% 구간 제외)
     const safeZoneStart = durationMs * 0.15;
     const safeZoneEnd = durationMs * 0.85;
     const reminderWindow = safeZoneEnd - safeZoneStart;
@@ -77,7 +74,6 @@ async function scheduleReminders(userId, task, durationMs, character, channel) {
         const randomDelay = safeZoneStart + Math.random() * reminderWindow;
         
         const timerId = setTimeout(async () => {
-            // 알림을 보내기 직전에, 아직도 해당 할 일이 진행 중인지 확인
             const currentTodo = todos.get(userId);
             if (!currentTodo || currentTodo.task !== task) return;
 
@@ -103,17 +99,32 @@ async function scheduleReminders(userId, task, durationMs, character, channel) {
     return reminderTimers;
 }
 
-// [새 기능] 모든 타이머(종료 타이머, 알림 타이머)를 정리하는 함수
 function clearAllTimers(userId) {
     const todo = todos.get(userId);
     if (todo) {
-        clearTimeout(todo.timer); // 종료 타이머
+        clearTimeout(todo.timer);
         if (todo.reminderTimers) {
-            todo.reminderTimers.forEach(clearTimeout); // 모든 알림 타이머
+            todo.reminderTimers.forEach(clearTimeout);
         }
         todos.delete(userId);
     }
 }
+
+// [새 기능] 남은 시간을 보기 좋게 변환하는 함수
+function formatRemainingTime(milliseconds) {
+    if (milliseconds < 0) milliseconds = 0;
+
+    const totalSeconds = Math.floor(milliseconds / 1000);
+    const hours = Math.floor(totalSeconds / 3600);
+    const minutes = Math.floor((totalSeconds % 3600) / 60);
+    
+    if (totalSeconds < 60) {
+        return '1분 미만';
+    }
+    
+    return `${hours}시간 ${minutes}분`;
+}
+
 
 async function getOrCreateWebhook(channel) {
     if (channelWebhooks.has(channel.id)) {
@@ -170,7 +181,6 @@ client.once(Events.ClientReady, () => {
 client.on(Events.InteractionCreate, async interaction => {
     try {
         if (interaction.isChatInputCommand()) {
-            // ... (이 부분은 변경 없음)
             if (interaction.commandName === 'todo') {
                 await interaction.deferReply({ ephemeral: true });
 
@@ -210,12 +220,39 @@ client.on(Events.InteractionCreate, async interaction => {
                     return interaction.editReply({ content: `**"${task}"** 을(를) 몇 시간 안에 하실 건가요?`, components: [timeRow] });
                 }
             }
+            // [새 기능] /현황 명령어 처리
+            else if (interaction.commandName === '현황') {
+                const todo = todos.get(interaction.user.id);
+                if (!todo) {
+                    return interaction.reply({ content: '현재 진행 중인 할 일이 없어요.', ephemeral: true });
+                }
+                const remainingTime = formatRemainingTime(todo.endTime - Date.now());
+                return interaction.reply({ content: `현재 **"${todo.task}"** 을(를) 진행 중입니다.\n남은 시간: **${remainingTime}**`, ephemeral: true });
+            }
+            // [새 기능] /포기 명령어 처리
+            else if (interaction.commandName === '포기') {
+                const todo = todos.get(interaction.user.id);
+                if (!todo) {
+                    return interaction.reply({ content: '현재 진행 중인 할 일이 없어요.', ephemeral: true });
+                }
+                
+                const confirmationButtons = new ActionRowBuilder()
+                    .addComponents(
+                        new ButtonBuilder().setCustomId(`giveup_yes_${interaction.user.id}_${todo.task}`).setLabel('네, 포기할래요').setStyle(ButtonStyle.Danger),
+                        new ButtonBuilder().setCustomId(`giveup_no_${interaction.user.id}_${todo.task}`).setLabel('아니요, 계속할게요').setStyle(ButtonStyle.Secondary)
+                    );
+
+                return interaction.reply({
+                    content: `정말로 **"${todo.task}"** 을(를) 포기하시겠어요?`,
+                    components: [confirmationButtons],
+                    ephemeral: true
+                });
+            }
         }
         else if (interaction.isButton()) {
             const [type, ...parts] = interaction.customId.split('_');
 
             if (type === 'time') {
-                // ... (이 부분은 변경 없음)
                 await interaction.update({ content: '응원해 줄 캐릭터를 선택해주세요!', components: [characterMenu] });
                 const [duration, ...taskParts] = parts;
                 const task = taskParts.join('_');
@@ -232,12 +269,98 @@ client.on(Events.InteractionCreate, async interaction => {
 
                 await interaction.editReply({ content: '응원해 줄 캐릭터를 선택해주세요!', components: [characterMenu] });
             } 
-            else if (type === 'finish') {
+            else if (type === 'finish' || type === 'extend' || type === 'giveup') {
                 const [answer, userId, ...taskParts] = parts;
                 const task = taskParts.join('_');
+                const todo = todos.get(userId);
+
+                if (!todo || todo.task !== task) {
+                    return interaction.update({ content: '이미 처리되었거나 만료된 할 일입니다.', components: [] });
+                }
+
+                if (type === 'giveup') {
+                    if (answer === 'yes') {
+                        await interaction.deferUpdate();
+                        const prompt = `당신은 ${todo.character.description} 캐릭터입니다. 이제부터 당신의 대사만 출력해야 합니다. 사용자가 "${todo.task}" 할 일을 포기했습니다. 이에 대해 캐릭터의 성격에 맞게 아쉬워하거나 쌀쌀맞게 한마디 해주세요.`;
+                        const result = await model.generateContent(prompt);
+                        const response = await result.response;
+                        const dialogue = response.text().trim().replace(/^"|"$/g, '');
+                        
+                        await interaction.editReply({ content: `**"${task}"** 을(를) 포기했습니다.`, components: [] });
+                        
+                        const webhook = await getOrCreateWebhook(interaction.channel);
+                        if (webhook) {
+                            await webhook.send({
+                                username: todo.character.label,
+                                avatarURL: todo.character.avatarURL,
+                                embeds: [{ description: `"${dialogue}"` }]
+                            });
+                        }
+                        clearAllTimers(userId);
+                    } else { // no
+                        await interaction.update({ content: '포기를 취소했습니다. 계속 힘내세요!', components: [] });
+                    }
+                    return;
+                }
+
+                if (type === 'extend') {
+                    await interaction.deferUpdate();
+                    const extensionMs = 30 * 60 * 1000; // 30분 연장
+
+                    // 기존 타이머 모두 제거
+                    clearTimeout(todo.timer);
+                    todo.reminderTimers.forEach(clearTimeout);
+
+                    const prompt = `당신은 ${todo.character.description} 캐릭터입니다. 이제부터 당신의 대사만 출력해야 합니다. 사용자가 "${todo.task}" 할 일에 대해 30분 연장을 요청했습니다. 캐릭터의 성격에 맞게 허락하거나 격려하는 대사를 한마디 해주세요.`;
+                    const result = await model.generateContent(prompt);
+                    const response = await result.response;
+                    const dialogue = response.text().trim().replace(/^"|"$/g, '');
+
+                    const webhook = await getOrCreateWebhook(interaction.channel);
+                    if (webhook) {
+                        await webhook.send({
+                            content: `<@${userId}>`,
+                            username: todo.character.label,
+                            avatarURL: todo.character.avatarURL,
+                            embeds: [{ description: `"${dialogue}"` }]
+                        });
+                    }
+
+                    // 새 종료 타이머 설정
+                    const newFinalTimer = setTimeout(async () => {
+                        // ... (시간 만료 로직과 동일)
+                        const currentTodo = todos.get(userId);
+                        if (currentTodo && currentTodo.task === task) {
+                             const finalConfirmationButtons = new ActionRowBuilder()
+                                .addComponents(
+                                    new ButtonBuilder().setCustomId(`finish_yes_${userId}_${task}`).setLabel('네, 끝냈어요').setStyle(ButtonStyle.Success),
+                                    new ButtonBuilder().setCustomId(`finish_no_${userId}_${task}`).setLabel('아니오, 못했어요').setStyle(ButtonStyle.Danger),
+                                    new ButtonBuilder().setCustomId(`finish_direct_${userId}_${task}`).setLabel('직접 입력').setStyle(ButtonStyle.Secondary),
+                                    new ButtonBuilder().setCustomId(`extend_request_${userId}_${task}`).setLabel('30분 더!').setStyle(ButtonStyle.Primary)
+                                );
+                            const webhookForTimer = await getOrCreateWebhook(interaction.channel);
+                             if(webhookForTimer) {
+                                await webhookForTimer.send({
+                                    content: `<@${userId}>`,
+                                    username: currentTodo.character.label,
+                                    avatarURL: currentTodo.character.avatarURL,
+                                    embeds: [{ description: `**"${task}"** 할 일은 다 하셨나요?` }],
+                                    components: [finalConfirmationButtons]
+                                });
+                            }
+                        }
+                    }, extensionMs);
+
+                    // todos 맵 정보 업데이트
+                    todo.endTime = Date.now() + extensionMs;
+                    todo.timer = newFinalTimer;
+                    todo.reminderTimers = []; // 간단하게 연장 시간에는 추가 알림 없음
+
+                    await interaction.editReply({ content: `시간이 30분 연장되었습니다.`, components: [] });
+                    return;
+                }
 
                 if (answer === 'direct') {
-                    // ... (이 부분은 변경 없음)
                     const modal = new ModalBuilder()
                         .setCustomId(`modal_submit_${userId}_${task}`)
                         .setTitle('할 일 결과 입력');
@@ -253,24 +376,16 @@ client.on(Events.InteractionCreate, async interaction => {
                     modal.addComponents(actionRow);
 
                     await interaction.showModal(modal);
-
-                } else {
+                } else { // yes or no
                     await interaction.deferUpdate();
                     
                     if (answer === 'yes') {
                         const taskToUpdate = dailyTasks.find(t => t.task === task);
-                        if (taskToUpdate) {
-                            taskToUpdate.completed = true;
-                        }
+                        if (taskToUpdate) taskToUpdate.completed = true;
                         updatePresence();
                     }
                     
-                    const todo = todos.get(userId);
-                    if (!todo || todo.task !== task) {
-                        return interaction.editReply({ content: '이미 처리되었거나 만료된 할 일입니다.', embeds: [], components: [] });
-                    }
-                    
-                    let prompt = `당신은 ${todo.character.description}라는 캐릭터입니다. 이제부터 당신의 대사만 출력해야 합니다. 다른 부가 설명은 절대 넣지 마세요. `;
+                    let prompt = `당신은 ${todo.character.description} 캐릭터입니다. 이제부터 당신의 대사만 출력해야 합니다. 다른 부가 설명은 절대 넣지 마세요. `;
                     if (answer === 'yes') {
                         prompt += `사용자가 "${todo.task}" 할 일을 성공적으로 끝낸 것을 칭찬하거나 축하하는 대사를 한마디 해주세요.`;
                     } else {
@@ -286,8 +401,6 @@ client.on(Events.InteractionCreate, async interaction => {
                         embeds: [{ description: `"${dialogue}"` }], 
                         components: [] 
                     });
-                    
-                    // [수정] 할 일이 끝나면 모든 타이머 정리
                     clearAllTimers(userId);
                 }
             }
@@ -338,7 +451,8 @@ client.on(Events.InteractionCreate, async interaction => {
                             .addComponents(
                                 new ButtonBuilder().setCustomId(`finish_yes_${userId}_${task}`).setLabel('네, 끝냈어요').setStyle(ButtonStyle.Success),
                                 new ButtonBuilder().setCustomId(`finish_no_${userId}_${task}`).setLabel('아니오, 못했어요').setStyle(ButtonStyle.Danger),
-                                new ButtonBuilder().setCustomId(`finish_direct_${userId}_${task}`).setLabel('직접 입력').setStyle(ButtonStyle.Secondary)
+                                new ButtonBuilder().setCustomId(`finish_direct_${userId}_${task}`).setLabel('직접 입력').setStyle(ButtonStyle.Secondary),
+                                new ButtonBuilder().setCustomId(`extend_request_${userId}_${task}`).setLabel('30분 더!').setStyle(ButtonStyle.Primary) // [수정] customId 변경
                             );
                         
                         const webhookForTimer = await getOrCreateWebhook(channel);
@@ -354,15 +468,15 @@ client.on(Events.InteractionCreate, async interaction => {
                     }
                 }, durationMs);
 
-                // [새 기능] 중간 알림 스케줄링
                 const reminderTimers = await scheduleReminders(userId, task, durationMs, selectedCharacter, channel);
 
                 todos.set(userId, {
                     task: task,
                     character: selectedCharacter,
                     timer: finalTimer,
-                    reminderTimers: reminderTimers, // [새 기능] 알림 타이머 ID 저장
+                    reminderTimers: reminderTimers,
                     channelId: channel.id,
+                    endTime: Date.now() + durationMs, // [새 기능] 종료 시간 기록
                 });
             }
         }
@@ -392,7 +506,6 @@ client.on(Events.InteractionCreate, async interaction => {
                     components: []
                 });
                 
-                // [수정] 할 일이 끝나면 모든 타이머 정리
                 clearAllTimers(userId);
             }
         }
