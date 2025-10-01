@@ -2,8 +2,6 @@ const { REST, Routes } = require('discord.js');
 const dotenv = require('dotenv');
 
 dotenv.config();
-
-// '/done' 명령어를 배열에서 제거했습니다.
 const commands = [
     {
         name: 'todo',
@@ -11,15 +9,15 @@ const commands = [
         options: [
             {
                 name: '할일',
-                type: 3, // String
+                type: 3, 
                 description: '수행할 작업 내용을 입력하세요.',
                 required: true,
             },
             {
                 name: '시간',
-                type: 3, // String
+                type: 3, 
                 description: '완료할 시간 (예: 1h 30m, 50m, 2h)',
-                required: false, // 선택 옵션
+                required: false, 
             },
         ],
     },
