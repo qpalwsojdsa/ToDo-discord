@@ -19,6 +19,7 @@ const model = genAI.getGenerativeModel({ model: "gemini-2.5-pro" });
 
 const todos = new Map();
 const channelWebhooks = new Map();
+
 let dailyTasks = [];
 
 const characters = [
@@ -55,7 +56,63 @@ function updatePresence() {
     }
     const recentTasks = dailyTasks.slice(-4);
     const statusText = recentTasks.map(t => `${t.completed ? '✔️' : '❌'}${t.task}`).join(' ');
+
     client.user.setActivity(statusText, { type: ActivityType.Watching });
+}
+
+// [새 기능] 중간 알림을 스케줄링하는 함수
+async function scheduleReminders(userId, task, durationMs, character, channel) {
+    const hours = durationMs / 3600000;
+    // 2.5시간당 1번의 알림을 기준으로 횟수 계산 (최소 30분 이상일 때만)
+    const numberOfReminders = hours > 0.5 ? Math.floor(hours / 2.5) + 1 : 0;
+    if (numberOfReminders === 0) return [];
+
+    const reminderTimers = [];
+    // 알림이 너무 빠르거나 늦게 가는 것을 방지 (앞/뒤 15% 구간 제외)
+    const safeZoneStart = durationMs * 0.15;
+    const safeZoneEnd = durationMs * 0.85;
+    const reminderWindow = safeZoneEnd - safeZoneStart;
+
+    for (let i = 0; i < numberOfReminders; i++) {
+        const randomDelay = safeZoneStart + Math.random() * reminderWindow;
+        
+        const timerId = setTimeout(async () => {
+            // 알림을 보내기 직전에, 아직도 해당 할 일이 진행 중인지 확인
+            const currentTodo = todos.get(userId);
+            if (!currentTodo || currentTodo.task !== task) return;
+
+            const webhook = await getOrCreateWebhook(channel);
+            if (!webhook) return;
+
+            const prompt = `당신은 ${character.description} 캐릭터입니다. 이제부터 당신의 대사만 출력해야 합니다. 사용자가 현재 "${task}" 할 일을 하는 중입니다. 이와 관련하여 캐릭터의 성격에 맞는 응원, 조언, 잡담, 혹은 가벼운 독촉 메시지를 한마디 해주세요.`;
+            
+            const result = await model.generateContent(prompt);
+            const response = await result.response;
+            const dialogue = response.text().trim().replace(/^"|"$/g, '');
+
+            await webhook.send({
+                content: `<@${userId}>`,
+                username: character.label,
+                avatarURL: character.avatarURL,
+                embeds: [{ description: `"${dialogue}"` }]
+            });
+
+        }, randomDelay);
+        reminderTimers.push(timerId);
+    }
+    return reminderTimers;
+}
+
+// [새 기능] 모든 타이머(종료 타이머, 알림 타이머)를 정리하는 함수
+function clearAllTimers(userId) {
+    const todo = todos.get(userId);
+    if (todo) {
+        clearTimeout(todo.timer); // 종료 타이머
+        if (todo.reminderTimers) {
+            todo.reminderTimers.forEach(clearTimeout); // 모든 알림 타이머
+        }
+        todos.delete(userId);
+    }
 }
 
 async function getOrCreateWebhook(channel) {
@@ -65,8 +122,12 @@ async function getOrCreateWebhook(channel) {
     try {
         const webhooks = await channel.fetchWebhooks();
         let webhook = webhooks.find(wh => wh.owner.id === client.user.id);
+
         if (!webhook) {
-            webhook = await channel.createWebhook({ name: '캐릭터 대리인', reason: '캐릭터 역할극을 위한 웹훅 생성' });
+            webhook = await channel.createWebhook({
+                name: '캐릭터 대리인',
+                reason: '캐릭터 역할극을 위한 웹훅 생성'
+            });
         }
         const webhookClient = new WebhookClient({ url: webhook.url });
         channelWebhooks.set(channel.id, webhookClient);
@@ -96,7 +157,9 @@ function parseDuration(durationStr) {
 
 client.once(Events.ClientReady, () => {
     console.log(`${client.user.tag} 봇이 성공적으로 로그인했습니다!`);
+    
     updatePresence();
+
     schedule.scheduleJob('0 0 * * *', () => {
         console.log('자정입니다. 일일 할 일 목록을 초기화합니다.');
         dailyTasks = [];
@@ -107,96 +170,153 @@ client.once(Events.ClientReady, () => {
 client.on(Events.InteractionCreate, async interaction => {
     try {
         if (interaction.isChatInputCommand()) {
+            // ... (이 부분은 변경 없음)
             if (interaction.commandName === 'todo') {
                 await interaction.deferReply({ ephemeral: true });
+
                 const task = interaction.options.getString('할일');
                 const timeInput = interaction.options.getString('시간');
+
                 if (todos.has(interaction.user.id)) {
                     return interaction.editReply({ content: '이미 진행 중인 할 일이 있어요!' });
                 }
+
                 dailyTasks.push({ task: task, completed: false });
                 updatePresence();
+
                 if (timeInput) {
                     const durationMs = parseDuration(timeInput);
                     if (durationMs <= 0) {
                         return interaction.editReply({ content: '시간 형식이 올바르지 않아요. (예: `1h 30m`, `50m`, `2h`)' });
                     }
-                    const characterMenu = new ActionRowBuilder().addComponents(new StringSelectMenuBuilder().setCustomId(`character_${durationMs}_${task}`).setPlaceholder('응원받을 캐릭터를 선택하세요!').addOptions(characters.map(char => ({ label: char.label, value: char.value }))));
+
+                    const characterMenu = new ActionRowBuilder()
+                        .addComponents(
+                            new StringSelectMenuBuilder()
+                                .setCustomId(`character_${durationMs}_${task}`)
+                                .setPlaceholder('응원받을 캐릭터를 선택하세요!')
+                                .addOptions(characters.map(char => ({ label: char.label, value: char.value }))),
+                        );
+                    
                     return interaction.editReply({ content: `**"${task}"** 을(를) 시작합니다. 응원해 줄 캐릭터를 선택해주세요!`, components: [characterMenu] });
                 } else {
-                    const timeRow = new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId(`time_1h_${task}`).setLabel('1시간').setStyle(ButtonStyle.Primary), new ButtonBuilder().setCustomId(`time_3h_${task}`).setLabel('3시간').setStyle(ButtonStyle.Primary), new ButtonBuilder().setCustomId(`time_5h_${task}`).setLabel('5시간').setStyle(ButtonStyle.Primary));
+                    const timeRow = new ActionRowBuilder()
+                        .addComponents(
+                            new ButtonBuilder().setCustomId(`time_1h_${task}`).setLabel('1시간').setStyle(ButtonStyle.Primary),
+                            new ButtonBuilder().setCustomId(`time_3h_${task}`).setLabel('3시간').setStyle(ButtonStyle.Primary),
+                            new ButtonBuilder().setCustomId(`time_5h_${task}`).setLabel('5시간').setStyle(ButtonStyle.Primary),
+                        );
+                    
                     return interaction.editReply({ content: `**"${task}"** 을(를) 몇 시간 안에 하실 건가요?`, components: [timeRow] });
                 }
             }
         }
         else if (interaction.isButton()) {
             const [type, ...parts] = interaction.customId.split('_');
+
             if (type === 'time') {
+                // ... (이 부분은 변경 없음)
                 await interaction.update({ content: '응원해 줄 캐릭터를 선택해주세요!', components: [characterMenu] });
                 const [duration, ...taskParts] = parts;
                 const task = taskParts.join('_');
                 const hours = parseInt(duration.replace('h', ''));
                 const durationMs = hours * 60 * 60 * 1000;
-                const characterMenu = new ActionRowBuilder().addComponents(new StringSelectMenuBuilder().setCustomId(`character_${durationMs}_${task}`).setPlaceholder('응원받을 캐릭터를 선택하세요!').addOptions(characters.map(char => ({ label: char.label, value: char.value }))));
+
+                const characterMenu = new ActionRowBuilder()
+                    .addComponents(
+                        new StringSelectMenuBuilder()
+                            .setCustomId(`character_${durationMs}_${task}`)
+                            .setPlaceholder('응원받을 캐릭터를 선택하세요!')
+                            .addOptions(characters.map(char => ({ label: char.label, value: char.value }))),
+                    );
+
                 await interaction.editReply({ content: '응원해 줄 캐릭터를 선택해주세요!', components: [characterMenu] });
-            }
+            } 
             else if (type === 'finish') {
                 const [answer, userId, ...taskParts] = parts;
                 const task = taskParts.join('_');
+
                 if (answer === 'direct') {
-                    const modal = new ModalBuilder().setCustomId(`modal_submit_${userId}_${task}`).setTitle('할 일 결과 입력');
-                    const reasonInput = new TextInputBuilder().setCustomId('reasonInput').setLabel("못한 이유나 다른 상황을 알려주세요.").setStyle(TextInputStyle.Paragraph).setPlaceholder('예: 갑자기 다른 급한 일이 생겼어요...').setRequired(true);
-                    modal.addComponents(new ActionRowBuilder().addComponents(reasonInput));
+                    // ... (이 부분은 변경 없음)
+                    const modal = new ModalBuilder()
+                        .setCustomId(`modal_submit_${userId}_${task}`)
+                        .setTitle('할 일 결과 입력');
+
+                    const reasonInput = new TextInputBuilder()
+                        .setCustomId('reasonInput')
+                        .setLabel("못한 이유나 다른 상황을 알려주세요.")
+                        .setStyle(TextInputStyle.Paragraph)
+                        .setPlaceholder('예: 갑자기 다른 급한 일이 생겼어요...')
+                        .setRequired(true);
+
+                    const actionRow = new ActionRowBuilder().addComponents(reasonInput);
+                    modal.addComponents(actionRow);
+
                     await interaction.showModal(modal);
+
                 } else {
                     await interaction.deferUpdate();
+                    
+                    if (answer === 'yes') {
+                        const taskToUpdate = dailyTasks.find(t => t.task === task);
+                        if (taskToUpdate) {
+                            taskToUpdate.completed = true;
+                        }
+                        updatePresence();
+                    }
+                    
                     const todo = todos.get(userId);
                     if (!todo || todo.task !== task) {
                         return interaction.editReply({ content: '이미 처리되었거나 만료된 할 일입니다.', embeds: [], components: [] });
                     }
-                    if (answer === 'yes') {
-                        const taskToUpdate = dailyTasks.find(t => t.task === task && t.completed === false);
-                        if (taskToUpdate) taskToUpdate.completed = true;
-                        updatePresence();
-                    }
+                    
                     let prompt = `당신은 ${todo.character.description}라는 캐릭터입니다. 이제부터 당신의 대사만 출력해야 합니다. 다른 부가 설명은 절대 넣지 마세요. `;
                     if (answer === 'yes') {
                         prompt += `사용자가 "${todo.task}" 할 일을 성공적으로 끝낸 것을 칭찬하거나 축하하는 대사를 한마디 해주세요.`;
                     } else {
                         prompt += `사용자가 "${todo.task}" 할 일을 끝내지 못했다고 답했습니다. 그를 위로하거나 다음을 격려하는 대사를 한마디 해주세요.`;
                     }
+                    
                     const result = await model.generateContent(prompt);
                     const response = await result.response;
                     const dialogue = response.text().trim().replace(/^"|"$/g, '');
-                    await interaction.editReply({ content: '', embeds: [{ description: `"${dialogue}"` }], components: [] });
-                    todos.delete(userId);
+                    
+                    await interaction.editReply({ 
+                        content: '', 
+                        embeds: [{ description: `"${dialogue}"` }], 
+                        components: [] 
+                    });
+                    
+                    // [수정] 할 일이 끝나면 모든 타이머 정리
+                    clearAllTimers(userId);
                 }
             }
         }
         else if (interaction.isStringSelectMenu()) {
             await interaction.deferUpdate();
+
             const [type, durationMsStr, ...taskParts] = interaction.customId.split('_');
             const durationMs = parseInt(durationMsStr);
             const task = taskParts.join('_');
-
+            
             if (type === 'character') {
                 const selectedCharacterIdentifier = interaction.values[0];
                 const userId = interaction.user.id;
                 const channel = interaction.channel;
+                
                 const selectedCharacter = characters.find(char => char.value === selectedCharacterIdentifier);
                 if (!selectedCharacter) {
                     return interaction.editReply({ content: '오류: 캐릭터 정보를 찾을 수 없습니다.', components: [] });
                 }
+
                 const webhook = await getOrCreateWebhook(interaction.channel);
                 if (!webhook) {
                     return interaction.editReply({ content: '웹훅을 생성할 수 없어서 메시지를 보낼 수 없어요. 봇 권한을 확인해주세요.', components: [] });
                 }
-
-                const deadline = Date.now() + durationMs;
-                const deadlineTimestamp = Math.floor(deadline / 1000);
-
+                
                 const hours = durationMs / 3600000;
                 const displayHours = Number.isInteger(hours) ? `${hours}시간` : `${Math.floor(hours)}시간 ${Math.round((hours % 1) * 60)}분`;
+                
                 const prompt = `당신은 ${selectedCharacter.description} 이제부터 당신의 대사만 출력해야 합니다. 다른 부가 설명은 절대 넣지 마세요. 사용자에게 "${task}"라는 할 일을 ${displayHours} 안에 해달라고 부탁하는 대사를 한마디 해주세요.`;
                 const result = await model.generateContent(prompt);
                 const response = await result.response;
@@ -204,84 +324,76 @@ client.on(Events.InteractionCreate, async interaction => {
                 
                 await interaction.editReply({ content: '캐릭터가 응원을 보냈습니다.', components: [] });
 
-                const startMessage = await webhook.send({
+                await webhook.send({
                     content: `<@${userId}>`,
                     username: selectedCharacter.label,
                     avatarURL: selectedCharacter.avatarURL,
-                    embeds: [{ description: `"${dialogue}"\n\n**마감:** <t:${deadlineTimestamp}:R>` }],
-                    fetchReply: true
+                    embeds: [{ description: `"${dialogue}"` }]
                 });
-                
-                // [수정] 독촉 빈도를 2.5시간(150분)당 1회로 대폭 감소
-                const numberOfNags = Math.min(4, Math.floor(durationMs / (150 * 60 * 1000)));
-                const nagWindowStart = durationMs * 0.15;
-                const nagWindowEnd = durationMs * 0.85;
-                const nagWindowLength = nagWindowEnd - nagWindowStart;
-
-                if (numberOfNags > 0) {
-                    const segmentLength = nagWindowLength / numberOfNags;
-                    for (let i = 0; i < numberOfNags; i++) {
-                        const randomDelayInSegment = Math.random() * segmentLength;
-                        const nagTimeoutDelay = nagWindowStart + (i * segmentLength) + randomDelayInSegment;
-
-                        setTimeout(async () => {
-                            const currentTodo = todos.get(userId);
-                            if (!currentTodo || currentTodo.task !== task) return;
-                            const nagWebhook = await getOrCreateWebhook(channel);
-                            if (nagWebhook) {
-                                const nagPrompt = `당신은 ${selectedCharacter.description}입니다. 사용자는 현재 "${task}" 작업을 하는 중입니다. 작업 중간에 그를 격려하거나, 조언하거나, 관련된 농담을 하거나, 혹은 그냥 당신의 생각을 말하는 등, 캐릭터에 맞는 독촉 메시지를 한마디만 자연스럽게 보내주세요.`;
-                                const nagResult = await model.generateContent(nagPrompt);
-                                const nagResponse = await nagResult.response;
-                                const nagDialogue = nagResponse.text().trim().replace(/^"|"$/g, '');
-                                await nagWebhook.send({ username: selectedCharacter.label, avatarURL: selectedCharacter.avatarURL, embeds: [{ description: `"${nagDialogue}"` }] });
-                            }
-                        }, nagTimeoutDelay);
-                    }
-                }
 
                 const finalTimer = setTimeout(async () => {
                     const currentTodo = todos.get(userId);
                     if (currentTodo && currentTodo.task === task) {
+                        const confirmationButtons = new ActionRowBuilder()
+                            .addComponents(
+                                new ButtonBuilder().setCustomId(`finish_yes_${userId}_${task}`).setLabel('네, 끝냈어요').setStyle(ButtonStyle.Success),
+                                new ButtonBuilder().setCustomId(`finish_no_${userId}_${task}`).setLabel('아니오, 못했어요').setStyle(ButtonStyle.Danger),
+                                new ButtonBuilder().setCustomId(`finish_direct_${userId}_${task}`).setLabel('직접 입력').setStyle(ButtonStyle.Secondary)
+                            );
+                        
                         const webhookForTimer = await getOrCreateWebhook(channel);
-                        if (webhookForTimer && currentTodo.messageId) {
-                            try {
-                                // [수정] 새 메시지를 보내는 대신, 원래 메시지를 직접 수정하여 버튼을 추가합니다.
-                                const confirmationButtons = new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId(`finish_yes_${userId}_${task}`).setLabel('네, 끝냈어요').setStyle(ButtonStyle.Success), new ButtonBuilder().setCustomId(`finish_no_${userId}_${task}`).setLabel('아니오, 못했어요').setStyle(ButtonStyle.Danger), new ButtonBuilder().setCustomId(`finish_direct_${userId}_${task}`).setLabel('직접 입력').setStyle(ButtonStyle.Secondary));
-                                const originalMessage = await channel.messages.fetch(currentTodo.messageId);
-                                const originalEmbed = originalMessage.embeds[0];
-                                const updatedDescription = originalEmbed.description.replace(/\*\*마감:\*\* <t:\d+:R>/, `**"${task}"** 할 일은 다 하셨나요?`);
-                                
-                                await webhookForTimer.editMessage(currentTodo.messageId, {
-                                    content: `<@${userId}>`,
-                                    embeds: [{ ...originalEmbed, description: updatedDescription }],
-                                    components: [confirmationButtons]
-                                });
-                            } catch (e) {
-                                console.error("타이머 메시지 수정에 실패했습니다:", e.code === 10008 ? "메시지를 찾을 수 없음 (아마도 삭제됨)" : e);
-                            }
+                        if(webhookForTimer) {
+                            await webhookForTimer.send({
+                                content: `<@${userId}>`,
+                                username: currentTodo.character.label,
+                                avatarURL: currentTodo.character.avatarURL,
+                                embeds: [{ description: `**"${task}"** 할 일은 다 하셨나요?` }],
+                                components: [confirmationButtons]
+                            });
                         }
                     }
                 }, durationMs);
-                
-                todos.set(userId, { task: task, character: selectedCharacter, timer: finalTimer, channelId: channel.id, messageId: startMessage.id });
+
+                // [새 기능] 중간 알림 스케줄링
+                const reminderTimers = await scheduleReminders(userId, task, durationMs, selectedCharacter, channel);
+
+                todos.set(userId, {
+                    task: task,
+                    character: selectedCharacter,
+                    timer: finalTimer,
+                    reminderTimers: reminderTimers, // [새 기능] 알림 타이머 ID 저장
+                    channelId: channel.id,
+                });
             }
         }
         else if (interaction.isModalSubmit()) {
             await interaction.deferUpdate();
+
             const [type, action, userId, ...taskParts] = interaction.customId.split('_');
             const task = taskParts.join('_');
+
             if (type === 'modal' && action === 'submit') {
                 const userInput = interaction.fields.getTextInputValue('reasonInput');
                 const todo = todos.get(userId);
+
                 if (!todo || todo.task !== task) {
                     return interaction.editReply({ content: '이미 처리되었거나 만료된 할 일입니다.', embeds: [], components: [] });
                 }
+
                 const prompt = `당신은 ${todo.character.description}라는 캐릭터입니다. 이제부터 당신의 대사만 출력해야 합니다. 다른 부가 설명은 절대 넣지 마세요. 사용자가 "${todo.task}" 할 일의 결과에 대해 "${userInput}" 라고 직접 입력했습니다. 사용자의 답변에 대해 캐릭터에 맞게 한마디 응답해주세요.`;
+
                 const result = await model.generateContent(prompt);
                 const response = await result.response;
                 const dialogue = response.text().trim().replace(/^"|"$/g, '');
-                await interaction.editReply({ content: '', embeds: [{ description: `"${dialogue}"` }], components: [] });
-                todos.delete(userId);
+                
+                await interaction.editReply({
+                    content: '',
+                    embeds: [{ description: `"${dialogue}"` }],
+                    components: []
+                });
+                
+                // [수정] 할 일이 끝나면 모든 타이머 정리
+                clearAllTimers(userId);
             }
         }
     } catch (error) {
@@ -302,5 +414,11 @@ client.login(process.env.DISCORD_TOKEN);
 
 const app = express();
 const port = process.env.PORT || 3000;
-app.get('/', (req, res) => res.send('Discord bot is alive!'));
-app.listen(port, () => console.log(`Web server is listening on port ${port}.`));
+
+app.get('/', (req, res) => {
+  res.send('Discord bot is alive!');
+});
+
+app.listen(port, () => {
+  console.log(`Web server is listening on port ${port}.`);
+});
