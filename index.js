@@ -97,21 +97,18 @@ client.on(Events.InteractionCreate, async interaction => {
     try {
         if (interaction.isChatInputCommand()) {
             if (interaction.commandName === 'todo') {
-                // [수정] deferReply를 사용해 응답 시간을 15분으로 늘립니다. ephemeral: true는 사용자에게만 보이게 합니다.
                 await interaction.deferReply({ ephemeral: true });
 
                 const task = interaction.options.getString('할일');
                 const timeInput = interaction.options.getString('시간');
 
                 if (todos.has(interaction.user.id)) {
-                    // [수정] reply -> editReply
                     return interaction.editReply({ content: '이미 진행 중인 할 일이 있어요!' });
                 }
 
                 if (timeInput) {
                     const durationMs = parseDuration(timeInput);
                     if (durationMs <= 0) {
-                        // [수정] reply -> editReply
                         return interaction.editReply({ content: '시간 형식이 올바르지 않아요. (예: `1h 30m`, `50m`, `2h`)' });
                     }
 
@@ -123,7 +120,6 @@ client.on(Events.InteractionCreate, async interaction => {
                                 .addOptions(characters.map(char => ({ label: char.label, value: char.value }))),
                         );
                     
-                    // [수정] reply -> editReply
                     return interaction.editReply({ content: `**"${task}"** 을(를) 시작합니다. 응원해 줄 캐릭터를 선택해주세요!`, components: [characterMenu] });
                 } else {
                     const timeRow = new ActionRowBuilder()
@@ -133,7 +129,6 @@ client.on(Events.InteractionCreate, async interaction => {
                             new ButtonBuilder().setCustomId(`time_5h_${task}`).setLabel('5시간').setStyle(ButtonStyle.Primary),
                         );
                     
-                    // [수정] reply -> editReply
                     return interaction.editReply({ content: `**"${task}"** 을(를) 몇 시간 안에 하실 건가요?`, components: [timeRow] });
                 }
             }
@@ -165,21 +160,29 @@ client.on(Events.InteractionCreate, async interaction => {
                 const todo = todos.get(userId);
 
                 if (!todo || todo.task !== task) {
-                    return interaction.editReply({ content: '이미 처리되었거나 만료된 할 일입니다.', components: [] });
+                    return interaction.editReply({ content: '이미 처리되었거나 만료된 할 일입니다.', embeds: [], components: [] });
                 }
                 
                 let prompt;
                 if (answer === 'yes') {
-                    prompt = `당신은 ${todo.character.description}라는 캐릭터입니다. 이제부터 당신의 대사만 출력해야 합니다. 다른 부가 설명은 절대 넣지 마세요. 대사는 반드시 큰따옴표(" ")로 감싸서 출력해야 합니다. 사용자가 "${todo.task}" 할 일을 성공적으로 끝낸 것을 칭찬하거나 축하하는 대사를 한마디 해주세요.`;
+                    // [수정] AI에게 따옴표를 붙이라는 지시 제거
+                    prompt = `당신은 ${todo.character.description}라는 캐릭터입니다. 이제부터 당신의 대사만 출력해야 합니다. 다른 부가 설명은 절대 넣지 마세요. 사용자가 "${todo.task}" 할 일을 성공적으로 끝낸 것을 칭찬하거나 축하하는 대사를 한마디 해주세요.`;
                 } else {
-                    prompt = `당신은 ${todo.character.description}라는 캐릭터입니다. 이제부터 당신의 대사만 출력해야 합니다. 다른 부가 설명은 절대 넣지 마세요. 대사는 반드시 큰따옴표(" ")로 감싸서 출력해야 합니다. 사용자가 "${todo.task}" 할 일을 끝내지 못했다고 답했습니다. 그를 위로하거나 다음을 격려하는 대사를 한마디 해주세요.`;
+                    // [수정] AI에게 따옴표를 붙이라는 지시 제거
+                    prompt = `당신은 ${todo.character.description}라는 캐릭터입니다. 이제부터 당신의 대사만 출력해야 합니다. 사용자가 "${todo.task}" 할 일을 끝내지 못했다고 답했습니다. 그를 위로하거나 다음을 격려하는 대사를 한마디 해주세요.`;
                 }
                 
                 const result = await model.generateContent(prompt);
                 const response = await result.response;
-                const finalMessage = response.text();
-
-                await interaction.editReply({ content: finalMessage, components: [] });
+                // [수정] AI 답변에서 혹시 있을 따옴표를 제거
+                const dialogue = response.text().trim().replace(/^"|"$/g, '');
+                
+                await interaction.editReply({ 
+                    content: '', 
+                    // [수정] 코드에서 직접 따옴표를 추가하여 임베드에 삽입
+                    embeds: [{ description: `"${dialogue}"` }], 
+                    components: [] 
+                });
                 todos.delete(userId);
             }
         }
@@ -208,11 +211,13 @@ client.on(Events.InteractionCreate, async interaction => {
                 
                 const hours = parseInt(durationMs) / 3600000;
                 const displayHours = Number.isInteger(hours) ? `${hours}시간` : `${Math.floor(hours)}시간 ${Math.round((hours % 1) * 60)}분`;
-
-                const prompt = `당신은 ${selectedCharacter.description} 이제부터 당신의 대사만 출력해야 합니다. 다른 부가 설명은 절대 넣지 마세요. 대사는 반드시 큰따옴표(" ")로 감싸서 출력해야 합니다. 사용자에게 "${task}"라는 할 일을 ${displayHours} 안에 해달라고 부탁하는 대사를 한마디 해주세요.`;
+                
+                // [수정] AI에게 따옴표를 붙이라는 지시 제거
+                const prompt = `당신은 ${selectedCharacter.description} 이제부터 당신의 대사만 출력해야 합니다. 다른 부가 설명은 절대 넣지 마세요. 사용자에게 "${task}"라는 할 일을 ${displayHours} 안에 해달라고 부탁하는 대사를 한마디 해주세요.`;
                 const result = await model.generateContent(prompt);
                 const response = await result.response;
-                const startMessage = response.text();
+                // [수정] AI 답변에서 혹시 있을 따옴표를 제거
+                const dialogue = response.text().trim().replace(/^"|"$/g, '');
                 
                 await interaction.editReply({ content: '캐릭터가 응원을 보냈습니다.', components: [] });
 
@@ -220,7 +225,8 @@ client.on(Events.InteractionCreate, async interaction => {
                     content: `<@${userId}>`,
                     username: selectedCharacter.label,
                     avatarURL: selectedCharacter.avatarURL,
-                    embeds: [{ description: startMessage.replaceAll('"', '') }]
+                    // [수정] 코드에서 직접 따옴표를 추가하여 임베드에 삽입
+                    embeds: [{ description: `"${dialogue}"` }]
                 });
 
                 const timer = setTimeout(async () => {
@@ -235,9 +241,10 @@ client.on(Events.InteractionCreate, async interaction => {
                         const webhookForTimer = await getOrCreateWebhook(channel);
                         if(webhookForTimer) {
                             await webhookForTimer.send({
-                                content: `<@${userId}>, **"${task}"** 할 일은 다 하셨나요?`,
+                                content: `<@${userId}>`,
                                 username: currentTodo.character.label,
                                 avatarURL: currentTodo.character.avatarURL,
+                                embeds: [{ description: `**"${task}"** 할 일은 다 하셨나요?` }],
                                 components: [confirmationButtons]
                             });
                         }
@@ -257,7 +264,6 @@ client.on(Events.InteractionCreate, async interaction => {
         if (interaction.deferred || interaction.replied) {
             await interaction.followUp({ content: '오류가 발생했습니다. 잠시 후 다시 시도해주세요.', ephemeral: true });
         } else {
-            // deferReply 자체가 실패했을 경우를 대비
             await interaction.reply({ content: '오류가 발생했습니다. 잠시 후 다시 시도해주세요.', ephemeral: true });
         }
     }
