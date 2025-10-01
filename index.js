@@ -312,7 +312,7 @@ client.on(Events.InteractionCreate, async interaction => {
                     
                     const webhook = await getOrCreateWebhook(interaction.channel);
                     if (webhook) {
-                        const prompt = `당신은 ${todo.character.description} 캐릭터입니다. 사용자가 결국 "${task}" 할 일을 포기했습니다. 그의 결정에 대해 캐릭터의 성격에 맞게 아쉬움, 격려, 혹은 질책 등 다양한 반응을 한마디 보여주세요.`;
+                        const prompt = `당신은 ${todo.character.description} 캐릭터입니다. 사용자가 결국 "${task}" 할 일을 포기했습니다. 그의 결정에 대해 캐릭터의 성격에 맞게 반응을 보여주세요.`;
                         const result = await model.generateContent(prompt);
                         const response = await result.response;
                         const dialogue = response.text().trim().replace(/^"|"$/g, '');
