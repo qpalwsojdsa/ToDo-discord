@@ -3,7 +3,7 @@ const dotenv = require('dotenv');
 
 dotenv.config();
 
-// [수정] /현황, /포기 명령어 추가
+// [수정] /status, /giveup 명령어 추가
 const commands = [
     {
         name: 'todo',
@@ -24,13 +24,13 @@ const commands = [
         ],
     },
     {
-        name: '현황',
+        name: 'status',
         description: '현재 진행 중인 할 일의 남은 시간을 확인합니다.',
     },
     {
-        name: '포기',
-        description: '진행 중인 할 일을 중단합니다.',
-    },
+        name: 'giveup',
+        description: '현재 진행 중인 할 일을 포기합니다.',
+    }
 ];
 
 const rest = new REST({ version: '10' }).setToken(process.env.DISCORD_TOKEN);
