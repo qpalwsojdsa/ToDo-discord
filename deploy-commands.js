@@ -2,6 +2,8 @@ const { REST, Routes } = require('discord.js');
 const dotenv = require('dotenv');
 
 dotenv.config();
+
+// [수정] /현황, /포기 명령어 추가
 const commands = [
     {
         name: 'todo',
@@ -9,17 +11,25 @@ const commands = [
         options: [
             {
                 name: '할일',
-                type: 3, 
+                type: 3, // String
                 description: '수행할 작업 내용을 입력하세요.',
                 required: true,
             },
             {
                 name: '시간',
-                type: 3, 
+                type: 3, // String
                 description: '완료할 시간 (예: 1h 30m, 50m, 2h)',
-                required: false, 
+                required: false, // 선택 옵션
             },
         ],
+    },
+    {
+        name: '현황',
+        description: '현재 진행 중인 할 일의 남은 시간을 확인합니다.',
+    },
+    {
+        name: '포기',
+        description: '진행 중인 할 일을 중단합니다.',
     },
 ];
 
@@ -33,7 +43,7 @@ const rest = new REST({ version: '10' }).setToken(process.env.DISCORD_TOKEN);
             { body: commands },
         );
         console.log('(/) 슬래시 명령어가 성공적으로 등록되었습니다.');
-    } catch (error)
+    } catch (error) {
         console.error(error);
     }
 })();
