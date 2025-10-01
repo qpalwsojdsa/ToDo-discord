@@ -1,7 +1,9 @@
 const express = require('express');
-const { Client, GatewayIntentBits, ActionRowBuilder, ButtonBuilder, ButtonStyle, StringSelectMenuBuilder, Events, WebhookClient, ModalBuilder, TextInputBuilder, TextInputStyle } = require('discord.js');
+// [수정] ActivityType과 스케줄러 추가
+const { Client, GatewayIntentBits, ActionRowBuilder, ButtonBuilder, ButtonStyle, StringSelectMenuBuilder, Events, WebhookClient, ModalBuilder, TextInputBuilder, TextInputStyle, ActivityType } = require('discord.js');
 const { GoogleGenerativeAI } = require('@google/generative-ai');
 const dotenv = require('dotenv');
+const schedule = require('node-schedule'); // [새 기능] 스케줄러 라이브러리
 
 dotenv.config();
 
@@ -18,6 +20,9 @@ const model = genAI.getGenerativeModel({ model: "gemini-2.5-pro" });
 
 const todos = new Map();
 const channelWebhooks = new Map();
+
+// [새 기능] 오늘의 할 일을 저장할 배열
+let dailyTasks = [];
 
 const characters = [
     {
@@ -45,6 +50,20 @@ const characters = [
         description: '너는 UTAU 소프트웨어의 기본 음성 라이브러리인 우타네 우타, 통칭 데포코다. 감정 표현이 서툰 로봇 소녀이며, 사용자를 "마스터"라고 부르며 따른다. 기본적으로 무뚝뚝하고 단답형으로 말하지만, 그 안에는 마스터를 아끼고 걱정하는 상냥하고 부드러운 마음이 숨겨져 있다. 대화는 짧지만, 마스터의 성공을 진심으로 기뻐하고 실패에는 조용히 위로를 건넨다.'
     },
 ];
+
+// [새 기능] 봇의 상태 메시지를 업데이트하는 함수
+function updatePresence() {
+    if (dailyTasks.length === 0) {
+        client.user.setActivity('오늘의 할 일을 기다리는 중...', { type: ActivityType.Watching });
+        return;
+    }
+    // 상태 메시지 글자 수 제한(128자)을 넘지 않도록 최근 4개의 할 일만 표시
+    const recentTasks = dailyTasks.slice(-4);
+    const statusText = recentTasks.map(t => `${t.completed ? '✔️' : '❌'}${t.task}`).join(' ');
+
+    client.user.setActivity(statusText, { type: ActivityType.Watching });
+}
+
 
 async function getOrCreateWebhook(channel) {
     if (channelWebhooks.has(channel.id)) {
@@ -88,6 +107,16 @@ function parseDuration(durationStr) {
 
 client.once(Events.ClientReady, () => {
     console.log(`${client.user.tag} 봇이 성공적으로 로그인했습니다!`);
+    
+    // [새 기능] 봇이 켜지면 초기 상태 메시지 설정
+    updatePresence();
+
+    // [새 기능] 매일 자정에 실행되는 스케줄러 설정
+    schedule.scheduleJob('0 0 * * *', () => {
+        console.log('자정입니다. 일일 할 일 목록을 초기화합니다.');
+        dailyTasks = [];
+        updatePresence();
+    });
 });
 
 client.on(Events.InteractionCreate, async interaction => {
@@ -102,6 +131,10 @@ client.on(Events.InteractionCreate, async interaction => {
                 if (todos.has(interaction.user.id)) {
                     return interaction.editReply({ content: '이미 진행 중인 할 일이 있어요!' });
                 }
+
+                // [새 기능] 새 할 일이 등록되면 dailyTasks에 추가
+                dailyTasks.push({ task: task, completed: false });
+                updatePresence(); // 상태 메시지 업데이트
 
                 if (timeInput) {
                     const durationMs = parseDuration(timeInput);
@@ -177,6 +210,15 @@ client.on(Events.InteractionCreate, async interaction => {
 
                     if (!todo || todo.task !== task) {
                         return interaction.editReply({ content: '이미 처리되었거나 만료된 할 일입니다.', embeds: [], components: [] });
+                    }
+                    
+                    // [새 기능] 할 일 완료 여부 상태 업데이트
+                    if (answer === 'yes') {
+                        const taskToUpdate = dailyTasks.find(t => t.task === task);
+                        if (taskToUpdate) {
+                            taskToUpdate.completed = true;
+                        }
+                        updatePresence(); // 상태 메시지 업데이트
                     }
                     
                     let prompt = `당신은 ${todo.character.description}라는 캐릭터입니다. 이제부터 당신의 대사만 출력해야 합니다. 다른 부가 설명은 절대 넣지 마세요. `;
