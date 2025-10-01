@@ -65,9 +65,6 @@ async function getOrCreateWebhook(channel) {
         return webhookClient;
     } catch (error) {
         console.error('웹훅을 가져오거나 생성하는 데 실패했습니다:', error);
-        if (interaction.channel) {
-            interaction.channel.send('웹훅을 사용하기 위한 권한이 부족해요. 저에게 `웹훅 관리` 권한이 있는지 확인해주세요!');
-        }
         return null;
     }
 }
@@ -137,6 +134,7 @@ client.on(Events.InteractionCreate, async interaction => {
             const [type, ...parts] = interaction.customId.split('_');
 
             if (type === 'time') {
+                await interaction.deferUpdate({ ephemeral: true });
                 const [duration, ...taskParts] = parts;
                 const task = taskParts.join('_');
                 const hours = parseInt(duration.replace('h', ''));
@@ -150,7 +148,7 @@ client.on(Events.InteractionCreate, async interaction => {
                             .addOptions(characters.map(char => ({ label: char.label, value: char.value }))),
                     );
 
-                await interaction.update({ content: '응원해 줄 캐릭터를 선택해주세요!', components: [characterMenu] });
+                await interaction.editReply({ content: '응원해 줄 캐릭터를 선택해주세요!', components: [characterMenu] });
             } 
             else if (type === 'finish') {
                 await interaction.deferUpdate();
@@ -163,23 +161,19 @@ client.on(Events.InteractionCreate, async interaction => {
                     return interaction.editReply({ content: '이미 처리되었거나 만료된 할 일입니다.', embeds: [], components: [] });
                 }
                 
-                let prompt;
+                let prompt = `당신은 ${todo.character.description}라는 캐릭터입니다. 이제부터 당신의 대사만 출력해야 합니다. 다른 부가 설명은 절대 넣지 마세요. `;
                 if (answer === 'yes') {
-                    // [수정] AI에게 따옴표를 붙이라는 지시 제거
-                    prompt = `당신은 ${todo.character.description}라는 캐릭터입니다. 이제부터 당신의 대사만 출력해야 합니다. 다른 부가 설명은 절대 넣지 마세요. 사용자가 "${todo.task}" 할 일을 성공적으로 끝낸 것을 칭찬하거나 축하하는 대사를 한마디 해주세요.`;
+                    prompt += `사용자가 "${todo.task}" 할 일을 성공적으로 끝낸 것을 칭찬하거나 축하하는 대사를 한마디 해주세요.`;
                 } else {
-                    // [수정] AI에게 따옴표를 붙이라는 지시 제거
-                    prompt = `당신은 ${todo.character.description}라는 캐릭터입니다. 이제부터 당신의 대사만 출력해야 합니다. 사용자가 "${todo.task}" 할 일을 끝내지 못했다고 답했습니다. 그를 위로하거나 다음을 격려하는 대사를 한마디 해주세요.`;
+                    prompt += `사용자가 "${todo.task}" 할 일을 끝내지 못했다고 답했습니다. 그를 위로하거나 다음을 격려하는 대사를 한마디 해주세요.`;
                 }
                 
                 const result = await model.generateContent(prompt);
                 const response = await result.response;
-                // [수정] AI 답변에서 혹시 있을 따옴표를 제거
                 const dialogue = response.text().trim().replace(/^"|"$/g, '');
                 
                 await interaction.editReply({ 
                     content: '', 
-                    // [수정] 코드에서 직접 따옴표를 추가하여 임베드에 삽입
                     embeds: [{ description: `"${dialogue}"` }], 
                     components: [] 
                 });
@@ -199,24 +193,20 @@ client.on(Events.InteractionCreate, async interaction => {
                 
                 const selectedCharacter = characters.find(char => char.value === selectedCharacterIdentifier);
                 if (!selectedCharacter) {
-                    console.error('선택한 캐릭터를 찾을 수 없습니다:', selectedCharacterIdentifier);
                     return interaction.editReply({ content: '오류: 캐릭터 정보를 찾을 수 없습니다.', components: [] });
                 }
 
                 const webhook = await getOrCreateWebhook(interaction.channel);
                 if (!webhook) {
-                    await interaction.editReply({ content: '웹훅을 생성할 수 없어서 메시지를 보낼 수 없어요. 봇 권한을 확인해주세요.', components: [] });
-                    return;
+                    return interaction.editReply({ content: '웹훅을 생성할 수 없어서 메시지를 보낼 수 없어요. 봇 권한을 확인해주세요.', components: [] });
                 }
                 
                 const hours = parseInt(durationMs) / 3600000;
                 const displayHours = Number.isInteger(hours) ? `${hours}시간` : `${Math.floor(hours)}시간 ${Math.round((hours % 1) * 60)}분`;
                 
-                // [수정] AI에게 따옴표를 붙이라는 지시 제거
                 const prompt = `당신은 ${selectedCharacter.description} 이제부터 당신의 대사만 출력해야 합니다. 다른 부가 설명은 절대 넣지 마세요. 사용자에게 "${task}"라는 할 일을 ${displayHours} 안에 해달라고 부탁하는 대사를 한마디 해주세요.`;
                 const result = await model.generateContent(prompt);
                 const response = await result.response;
-                // [수정] AI 답변에서 혹시 있을 따옴표를 제거
                 const dialogue = response.text().trim().replace(/^"|"$/g, '');
                 
                 await interaction.editReply({ content: '캐릭터가 응원을 보냈습니다.', components: [] });
@@ -225,7 +215,6 @@ client.on(Events.InteractionCreate, async interaction => {
                     content: `<@${userId}>`,
                     username: selectedCharacter.label,
                     avatarURL: selectedCharacter.avatarURL,
-                    // [수정] 코드에서 직접 따옴표를 추가하여 임베드에 삽입
                     embeds: [{ description: `"${dialogue}"` }]
                 });
 
@@ -261,10 +250,16 @@ client.on(Events.InteractionCreate, async interaction => {
         }
     } catch (error) {
         console.error('상호작용 처리 중 오류 발생:', error);
-        if (interaction.deferred || interaction.replied) {
-            await interaction.followUp({ content: '오류가 발생했습니다. 잠시 후 다시 시도해주세요.', ephemeral: true });
-        } else {
-            await interaction.reply({ content: '오류가 발생했습니다. 잠시 후 다시 시도해주세요.', ephemeral: true });
+        // [수정] 오류가 발생했을 때 사용자에게 응답을 보내려다 또 다른 오류가 발생하는 것을 방지합니다.
+        // 이제 봇이 멈추지 않고, 오류 로그만 남깁니다.
+        try {
+            if (!interaction.replied && !interaction.deferred) {
+                await interaction.reply({ content: '오류가 발생했습니다. 잠시 후 다시 시도해주세요.', ephemeral: true });
+            } else {
+                await interaction.followUp({ content: '오류가 발생했습니다. 잠시 후 다시 시도해주세요.', ephemeral: true });
+            }
+        } catch (e) {
+            console.error("오류 응답을 보내는 데에도 실패했습니다:", e);
         }
     }
 });
