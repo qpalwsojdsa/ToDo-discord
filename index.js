@@ -132,7 +132,7 @@ client.on(Events.InteractionCreate, async interaction => {
         else if (interaction.isButton()) {
             const [type, ...parts] = interaction.customId.split('_');
             if (type === 'time') {
-                await interaction.deferUpdate();
+                await interaction.update({ content: '응원해 줄 캐릭터를 선택해주세요!', components: [characterMenu] });
                 const [duration, ...taskParts] = parts;
                 const task = taskParts.join('_');
                 const hours = parseInt(duration.replace('h', ''));
@@ -194,6 +194,7 @@ client.on(Events.InteractionCreate, async interaction => {
 
                 const deadline = Date.now() + durationMs;
                 const deadlineTimestamp = Math.floor(deadline / 1000);
+
                 const hours = durationMs / 3600000;
                 const displayHours = Number.isInteger(hours) ? `${hours}시간` : `${Math.floor(hours)}시간 ${Math.round((hours % 1) * 60)}분`;
                 const prompt = `당신은 ${selectedCharacter.description} 이제부터 당신의 대사만 출력해야 합니다. 다른 부가 설명은 절대 넣지 마세요. 사용자에게 "${task}"라는 할 일을 ${displayHours} 안에 해달라고 부탁하는 대사를 한마디 해주세요.`;
@@ -203,16 +204,17 @@ client.on(Events.InteractionCreate, async interaction => {
                 
                 await interaction.editReply({ content: '캐릭터가 응원을 보냈습니다.', components: [] });
 
+                // 시작 메시지를 보내고, 나중에 수정하기 위해 메시지 ID를 저장
                 const startMessage = await webhook.send({
                     content: `<@${userId}>`,
                     username: selectedCharacter.label,
                     avatarURL: selectedCharacter.avatarURL,
                     embeds: [{ description: `"${dialogue}"\n\n**마감:** <t:${deadlineTimestamp}:R>` }],
-                    fetchReply: true // 메시지 객체를 반환받기 위해 필요
+                    fetchReply: true
                 });
 
-                // [수정] 독촉 빈도를 2.5시간당 1회로 크게 줄임
-                const numberOfNags = Math.min(3, Math.floor(durationMs / (150 * 60 * 1000)));
+                // [수정] 독촉 빈도를 2.5시간(150분)당 1회로 대폭 감소
+                const numberOfNags = Math.min(4, Math.floor(durationMs / (150 * 60 * 1000)));
                 const nagWindowStart = durationMs * 0.15;
                 const nagWindowEnd = durationMs * 0.85;
                 const nagWindowLength = nagWindowEnd - nagWindowStart;
@@ -247,31 +249,30 @@ client.on(Events.InteractionCreate, async interaction => {
                 const finalTimer = setTimeout(async () => {
                     const currentTodo = todos.get(userId);
                     if (currentTodo && currentTodo.task === task) {
-                        // [새 기능] 타이머가 끝나면 시작 메시지를 수정하여 "마감" 표시
-                        const timerEndWebhook = await getOrCreateWebhook(channel);
-                        if (timerEndWebhook) {
-                            await timerEndWebhook.editMessage(currentTodo.startMessageId, {
-                                embeds: [{ description: `"${currentTodo.dialogue}"\n\n**타임 아웃!**` }]
-                            }).catch(e => console.error("마감 메시지 수정 실패:", e));
+                        // [새 기능] 타이머가 만료되면, 원래 메시지를 수정하여 타이머를 제거
+                        try {
+                            const timerWebhook = await getOrCreateWebhook(channel);
+                            if (timerWebhook && currentTodo.messageId) {
+                                const originalMessage = await channel.messages.fetch(currentTodo.messageId);
+                                const originalEmbed = originalMessage.embeds[0];
+                                originalEmbed.description = originalEmbed.description.replace(/\n\n\*\*마감:\*\* <t:\d+:R>/, '\n\n**마감 시간 종료!**');
+                                await timerWebhook.editMessage(currentTodo.messageId, { embeds: [originalEmbed] });
+                            }
+                        } catch (e) {
+                            console.error("타이머 메시지 수정에 실패했습니다:", e.code === 10008 ? "메시지를 찾을 수 없음" : e);
                         }
                         
+                        // 확인 버튼 전송
                         const confirmationButtons = new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId(`finish_yes_${userId}_${task}`).setLabel('네, 끝냈어요').setStyle(ButtonStyle.Success), new ButtonBuilder().setCustomId(`finish_no_${userId}_${task}`).setLabel('아니오, 못했어요').setStyle(ButtonStyle.Danger), new ButtonBuilder().setCustomId(`finish_direct_${userId}_${task}`).setLabel('직접 입력').setStyle(ButtonStyle.Secondary));
                         const webhookForTimer = await getOrCreateWebhook(channel);
-                        if(webhookForTimer) {
+                         if(webhookForTimer) {
                             await webhookForTimer.send({ content: `<@${userId}>`, username: currentTodo.character.label, avatarURL: currentTodo.character.avatarURL, embeds: [{ description: `**"${task}"** 할 일은 다 하셨나요?` }], components: [confirmationButtons] });
                         }
                     }
                 }, durationMs);
                 
-                // [수정] todos 맵에 시작 메시지 ID와 원본 대사도 저장
-                todos.set(userId, { 
-                    task: task, 
-                    character: selectedCharacter, 
-                    timer: finalTimer, 
-                    channelId: channel.id, 
-                    startMessageId: startMessage.id,
-                    dialogue: dialogue 
-                });
+                // [수정] todos 맵에 시작 메시지 ID도 함께 저장
+                todos.set(userId, { task: task, character: selectedCharacter, timer: finalTimer, channelId: channel.id, messageId: startMessage.id });
             }
         }
         else if (interaction.isModalSubmit()) {
