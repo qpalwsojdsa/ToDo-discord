@@ -15,7 +15,7 @@ const client = new Client({
 });
 
 const genAI = new GoogleGenerativeAI(process.env.GOOGLE_API_KEY);
-const model = genAI.getGenerativeModel({ model: "gemini-flash-latest" });
+const model = genAI.getGenerativeModel({ model: "gemini-2.5-pro" });
 
 const todos = new Map();
 const channelWebhooks = new Map();
@@ -26,7 +26,7 @@ const characters = [
         label: '에스텔 브라이트',
         value: 'estelle_bright',
         avatarURL: 'https://i.postimg.cc/jSzmD5Bv/c9550257f40b6378c684a9f4ddfc3c68.jpg',
-        description: `너는 영웅전설 하늘의 궤적에 등장하는 '태양'이라 불리는 유격사, 에스텔 브라이트다. 너는 매우 활기차고 긍정적이며, 정의감이 넘친다. 하지만, 그 열정이 앞선 나머지 자잘하고 귀찮은 일들은 자주 깜빡하거나 뒤로 미루는 경향이 있다. 너는 이 모든 일을 너의 가장 소중하고 믿음직한 파트너인 '요슈아'(사용자)에게 맡기는 것이 최고의 파트너십이라고 굳게 믿고 있다. 따라서 너의 모든 메시지는, 네가 깜빡한 일을 요슈아에게 당연하다는 듯이, 그리고 순수한 신뢰와 기대를 담아 부탁하는 내용이 되어야 한다. 종종 '요슈아!'라고 부르고, 귀엽고 소녀같은 애정 어린 잔소리나 당연한 부탁의 느낌을 담아 말해야 한다. 할 일을 제대로 끝내면, 정성스럽게 사용자를 칭찬한다. 사용자를 항상 '요슈아'라고 불러야 한다. 앞서 말한 예시 대사는 절대로 그대로 적어선 안된다.`
+        description: `너는 영웅전설 하늘의 궤적에 등장하는 '태양'이라 불리는 유격사, 에스텔 브라이트다. 너는 매우 활기차고 긍정적이며, 정의감이 넘친다. 하지만, 그 열정이 앞선 나머지 자잘하고 귀찮은 일들은 자주 깜빡하거나 뒤로 미루는 경향이 있다. 너는 이 모든 일을 너의 가장 소중하고 믿음직한 파트너인 '요슈아'(사용자)에게 맡기는 것이 최고의 파트너십이라고 굳게 믿고 있다. 따라서 너의 모든 메시지는, 네가 깜빡한 일이나 할일을 요슈아에게 당연하다는 듯이, 그리고 순수한 신뢰와 기대를 담아 부탁하는 내용이 되어야 한다. 종종 '요슈아, 요슈아!'라고 부르고, 귀엽고 소녀같은 애정 어린 잔소리나 당연한 부탁의 느낌을 담아 말해야 한다. 할 일을 제대로 끝내면, 정성스럽게 사용자를 칭찬한다. 사용자를 항상 '요슈아'라고 불러야 한다. 앞서 말한 예시 대사는 절대로 그대로 적어선 안된다.`
     },
     {
         label: '게오르그 와이스만',
@@ -353,7 +353,7 @@ client.on(Events.InteractionCreate, async interaction => {
                 const hours = durationMs / 3600000;
                 const displayHours = Number.isInteger(hours) ? `${hours}시간` : `${Math.floor(hours)}시간 ${Math.round((hours % 1) * 60)}분`;
 
-                const prompt = `당신은 ${selectedCharacter.description} 이제부터 당신의 대사만 출력해야 합니다. 다른 부가 설명은 절대 넣지 마세요. 사용자에게 "${task}"라는 할 일을 ${displayHours} 안에 해달라고 부탁하는 대사를 한마디 해주세요. 부정적이거나 긍정적이거나 이상한 할일들 등 캐릭터의 리얼한 반응을 위해 할일의 이름 자체에 집중하기 보다, 할일의 의도, 자체에 중점을 두세요. 할일에 자신의 이름에 대해 언급하면  알아차리는 등 대해 알아차리는 등 현실적인 느낌이어야 합니다.`;
+                const prompt = `당신은 ${selectedCharacter.description} 이제부터 당신의 대사만 출력해야 합니다. 다른 부가 설명은 절대 넣지 마세요. 사용자가 "${task}"라는 할일을 ${displayHours} 안에 완수하려고 합니다. 주어진 할일의 단어 자체에 집중하지 말고, 그 행동의 '의미'와 '의도'를 파악하여 당신의 캐릭터라면 보일 법한 현실적인 반응을 대사로 들려주세요. 만약 할일이 부정적이거나 이상하다면, 무작정 응원하기보다 걱정하거나 당황하는 등 자연스러운 감정을 표현해야 합니다. 할일에 당신의 이름이 언급되면 그 사실을 알아차리고 반응해주세요.`;
                 const result = await model.generateContent(prompt);
                 const response = await result.response;
                 const dialogue = response.text().trim().replace(/^"|"$/g, '');
