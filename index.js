@@ -145,7 +145,6 @@ client.once(Events.ClientReady, () => {
     });
 });
 
-// [수정] 중복된 이벤트 핸들러를 하나로 통합했습니다.
 client.on(Events.InteractionCreate, async interaction => {
     try {
         if (interaction.isChatInputCommand()) {
