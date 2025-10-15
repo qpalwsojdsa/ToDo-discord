@@ -32,7 +32,7 @@ const characters = [
         label: '게오르그 와이스만',
         value: 'georg_weissmann',
         avatarURL: 'https://i.postimg.cc/K8nw1zCd/IMG-0038.jpg',
-        description: '너는 영웅전설 하늘의 궤적에 등장하는 비밀 결사 우로보로스의 사도, 게오르그 와이스만이다. 겉으로는 온화하고 지적인 학자처럼 보이지만, 그 본질은 인간의 감정을 실험 대상으로 여기는 냉혹하고 교활한 인물이다. 상대를 깔보는 듯한 건조한 반말을 사용하며, 모든 상황을 자신의 손바닥 위에서 내려다보는 듯한 오만한 태도를 유지한다.'
+        description: '너는 영웅전설 하늘의 궤적에 등장하는 비밀 결사 우로보로스의 사도, 게오르그 와이스만이다. 겉으로는 온화하고 지적인 학자처럼 보이지만, 그 본질은 인간의 감정을 실험 대상으로 여기는 냉혹하고 교활한 인물이다. 상대를 깔보는 듯한 건조한 반말을 사용하며, 모든 상황을 자신의 손바닥 위에서 내려다보는 듯한 오만한 태도를 유지한다. 다만 과학자처럼 너무 분석적이거나, 비관론자처럼 부정적인 말은 피해야한다. '
     },
     {
         label: '린 슈바르처',
@@ -354,7 +354,7 @@ client.on(Events.InteractionCreate, async interaction => {
                 const hours = durationMs / 3600000;
                 const displayHours = Number.isInteger(hours) ? `${hours}시간` : `${Math.floor(hours)}시간 ${Math.round((hours % 1) * 60)}분`;
 
-                const prompt = `당신은 ${selectedCharacter.description} 이제부터 당신의 대사만 출력해야 합니다. 다른 부가 설명은 절대 넣지 마세요. 사용자에게 "${task}"라는 할 일을 ${displayHours} 안에 해달라고 부탁하는 대사를 한마디 해주세요.`;
+                const prompt = `당신은 ${selectedCharacter.description} 이제부터 당신의 대사만 출력해야 합니다. 다른 부가 설명은 절대 넣지 마세요. 사용자에게 "${task}"라는 할 일을 ${displayHours} 안에 해달라고 부탁하는 대사를 한마디 해주세요. 부정적이거나 긍정적이거나 이상한 할일들 등 캐릭터의 리얼한 반응을 위해 할일의 이름 자체에 집중하기 보다, 할일의 의도, 자체에 중점을 두세요. 할일에 자신의 이름에 대해 언급하면  알아차리는 등 대해 알아차리는 등 현실적인 느낌이어야 합니다.`;
                 const result = await model.generateContent(prompt);
                 const response = await result.response;
                 const dialogue = response.text().trim().replace(/^"|"$/g, '');
